@@ -173,6 +173,22 @@ header{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-co
 .art .q{font:600 14px var(--mono);text-align:right}
 .art .m{grid-column:1/-1;color:var(--muted);font:12px var(--mono)}
 textarea.out{width:100%;min-height:90px;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:8px;font:12px var(--mono)}
+
+/* ---- fiche PF (supervision) ---- */
+.pfhero{display:flex;flex-direction:column;gap:12px}
+.pfh-top{display:flex;gap:16px;justify-content:space-between;align-items:flex-start}
+.pfh-code{font:700 26px var(--mono);overflow-wrap:anywhere}
+.pfh-desc{color:var(--muted);font-size:15px;margin-top:2px}
+.pfh-prod{border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;border:2px solid var(--good);background:color-mix(in srgb,var(--good) 12%,var(--surface))}
+.pfh-prod.ko{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--surface))}
+.pfh-lbl{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.pfh-prod b{font:700 56px/1.05 var(--mono)}
+.pfh-lim{font-size:14px}
+.pfh-dates{margin:0;font-size:14px;color:var(--muted)}
+.pfh-dates b{color:var(--ink)}
+body.scan header,body.scan .top,body.scan section[aria-label="Saisie"],body.scan .tabs,body.scan #v-plan,body.scan #v-pairs,body.scan #v-move,body.scan #v-pf .toolbar,body.scan .drawer{display:none!important}
+body.scan .pfh-code{font-size:30px}
+@media (max-width:520px){.pfh-prod b{font-size:46px}}
 </style>
 
 <div class="wrap">
@@ -265,7 +281,7 @@ textarea.out{width:100%;min-height:90px;border:1px solid var(--line);border-radi
   </section>
 
   <section id="v-pf" class="wrap" style="gap:12px" hidden>
-    <div class="toolbar"><input type="search" id="pfq" placeholder="Code ou désignation du PF (ou scanner le QR)" aria-label="Recherche de PF"><label class="chk"><input type="checkbox" id="pfact" checked> OF actifs seulement</label></div>
+    <div class="toolbar"><input type="search" id="pfq" placeholder="Code ou désignation du PF" aria-label="Recherche de PF"><label class="chk"><input type="checkbox" id="pfact" checked> OF actifs seulement</label></div>
     <div id="pfbody"></div>
   </section>
 
@@ -971,7 +987,7 @@ function renderPairs(){
     const key=p.k+'|'+p.m,isOpen=openPf.has(key);
     const kS=stockLocs(p.k).length>0,mS=stockLocs(p.m).length>0;
     h+=`<tr><td class="${kS?'stk':''}"><button class="lnk" data-c="${esc(p.k)}">${esc(p.k)}</button><br><span class="note">${esc(desc(p.k))}</span><div style="margin-top:4px">${stkChips(p.k)}</div></td><td class="${mS?'stk':''}"><button class="lnk" data-c="${esc(p.m)}">${esc(p.m)}</button><br><span class="note">${esc(desc(p.m))}</span><div style="margin-top:4px">${stkChips(p.m)}</div></td><td class="m"><button class="x" data-pfk="${esc(key)}" aria-expanded="${isOpen}">${isOpen?'Masquer':'Voir'} les PF</button><div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${stChips(cnt)}</div></td><td><span class="tag ${s.cl}">${esc(s.st)}</span></td></tr>`;
-    if(isOpen)h+=`<tr class="pfd"><td colspan="4"><div class="cols"><div><p class="lbl">PF du corps ${esc(p.k)}</p>${pfList(pfsOf(p.k,'corps'))}</div><div><p class="lbl">PF du manchon ${esc(p.m)}</p>${pfList(pfsOf(p.m,'manchon'))}</div>${(mb.get(p.m)||new Map).size?`<div><p class="lbl">Buses du manchon ${esc(p.m)}</p><div class="pfl">${[...mb.get(p.m)].map(([b,s])=>`<div><button class="lnk" data-c="${esc(b)}">${esc(b)}</button><span>${esc(desc(b))}</span><span class="note">${s.size} PF</span>${stkChips(b)}</div>`).join('')}</div></div>`:''}</div></td></tr>`;
+    if(isOpen)h+=`<tr class="pfd"><td colspan="4"><div class="cols"><div><p class="lbl">PF du corps ${esc(p.k)}</p>${pfList(pfsOf(p.k,'corps'))}</div><div><p class="lbl">PF du manchon ${esc(p.m)}</p>${pfFilter(pfsOf(p.m,'manchon'))}</div>${(mb.get(p.m)||new Map).size?`<div><p class="lbl">Buses du manchon ${esc(p.m)}</p><div class="pfl">${[...mb.get(p.m)].map(([b,s])=>`<div><button class="lnk" data-c="${esc(b)}">${esc(b)}</button><span>${esc(desc(b))}</span><span class="note">${s.size} PF</span>${stkChips(b)}</div>`).join('')}</div></div>`:''}</div></td></tr>`;
   }
   $('pairs').innerHTML=h||'<tr><td colspan="4" class="empty">Aucun couple. Chargez la liste des OF et la gamme, ou changez le mot-clé de PF.</td></tr>';
   $('ccount').textContent=n+' couple'+(n>1?'s':'');
@@ -1281,47 +1297,75 @@ function pfSheet(p){
 function pfLabels(list){
   return `<section class="sheet lbls">${list.map(p=>`<div class="lb">${qrSvg(pfUrl(p),110)}<b>${esc(p)}</b><span>${esc(desc(p).slice(0,34))}</span></div>`).join('')}</section>`;
 }
-let PFSEL=null,PFQ='';
+let PFSEL=null,PFQ='',SCAN=false;
+const OFORD={'en cours':0,'en attente':1,'edite':2,'solde':3};
+const isAct=p=>[...bomIndex().get(p).ofs.values()].some(o=>['en cours','en attente','edite'].includes(norm(o.f)));
+function pfFilter(){
+  const q=norm(PFQ),act=$('pfact')?.checked,P=bomIndex();let L=[...P.keys()];
+  if(act)L=L.filter(isAct);
+  if(q)L=L.filter(p=>norm(p).includes(q)||norm(desc(p)).includes(q));
+  return L.sort();
+}
+function pfHero(R,p){
+  const dI=S.meta.inv?.d||'date inconnue',dO=S.meta.of?.d||'date inconnue';
+  const ok=R.prod!==null&&R.prod>0;
+  const lim=R.limiting.slice(0,3).map(c=>`<b>${esc(c)}</b>`).join(', ');
+  return `<div class="panel pfhero"><div class="pfh-top"><div><div class="pfh-code">${esc(p)}</div><div class="pfh-desc">${esc(desc(p))}</div></div>${SCAN?'':`<div>${qrSvg(pfUrl(p),96)}</div>`}</div>
+  <div class="pfh-prod ${ok?'ok':'ko'}"><span class="pfh-lbl">Quantité productible</span><b>${R.prod===null?'—':fmt(R.prod)}</b><span class="pfh-lim">${R.limiting.length?'Composant limitant : '+lim:'Aucune quantité de lien connue.'}</span></div>
+  <p class="pfh-dates">Stock au <b>${esc(dI)}</b> · Liste des OF au <b>${esc(dO)}</b></p>
+  ${SCAN?'':'<div class="row"><button class="btn ghost" type="button" data-pfprint="1">Imprimer la fiche</button></div>'}</div>`;
+}
 function renderPf(){
   const el=$('pfbody');if(!el)return;
-  const q=norm(PFQ),act=$('pfact')?.checked;
-  const P=bomIndex();let L=[...P.keys()];
-  if(act)L=L.filter(p=>[...P.get(p).ofs.values()].some(o=>['en cours','en attente','edite'].includes(norm(o.f))));
-  if(q)L=L.filter(p=>norm(p).includes(q)||norm(desc(p)).includes(q));
-  L.sort();const tot=L.length;L=L.slice(0,60);
-  const list=`<div class="panel"><p class="note" style="margin:0 0 6px">${tot} PF${tot>60?' (60 premiers affichés, affinez la recherche)':''}</p><div class="pfl">${L.map(p=>`<button class="lnk" data-pfsel="${esc(p)}" style="text-align:left;display:block;${p===PFSEL?'font-weight:700':''}">${esc(p)} <span class="note">${esc(desc(p))}</span></button>`).join('')||'<span class="note">Aucun PF.</span>'}</div><div class="row" style="margin-top:8px"><button class="btn ghost" type="button" data-pflbl="1">Imprimer les étiquettes QR de cette liste</button></div></div>`;
-  let det='';
+  let list='',det='';
   if(PFSEL){
     const R=pfCalc(PFSEL);
-    if(!R)det=`<div class="panel"><p>PF ${esc(PFSEL)} introuvable dans les OF chargés.</p></div>`;
+    if(!R)det=`<div class="panel"><p style="margin:0"><b>${esc(PFSEL)}</b> : PF introuvable dans les OF chargés.</p></div>`;
     else{
-      const st=['en cours','en attente','edite','solde'];
-      det=`<div class="panel"><div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap"><div>${qrSvg(pfUrl(PFSEL),150)}</div><div style="flex:1;min-width:220px"><h2 style="margin:0">${esc(PFSEL)}</h2><p class="note" style="margin:2px 0 8px">${esc(desc(PFSEL))}</p><p style="margin:0;font-size:22px"><b>Productible : ${R.prod===null?'—':fmt(R.prod)}</b></p><p class="note" style="margin:2px 0">${R.limiting.length?'Composant limitant : '+R.limiting.slice(0,5).map(esc).join(', '):'Aucune quantité de lien connue.'}</p><p class="note" style="margin:2px 0">Stock dispo = statut A, tous emplacements. Productible = plus petit (stock ÷ qté de lien) arrondi à l'unité.</p><div class="row" style="margin-top:8px"><button class="btn" type="button" data-pfprint="1">Imprimer la fiche</button></div></div></div></div>
-      <div class="panel"><h2 style="margin:0 0 8px">Composants (${R.rows.length})</h2><div class="tw">${pfTable(R,false)}</div>${R.rows.some(r=>r.diff)?'<p class="note">* la quantité de lien diffère entre OF : celle de l\'OF le plus avancé est utilisée.</p>':''}</div>
-      <div class="panel"><h2 style="margin:0 0 8px">OF (${R.ofs.length})</h2><div class="tw"><table class="tbl"><thead><tr><th>OF</th><th>Situation</th><th>Qté prévue</th><th>Qté restante</th></tr></thead><tbody>${R.ofs.map(o=>`<tr><td>${esc(o.o)}</td><td>${esc(o.f)}</td><td class="n">${esc(o.q||'')}</td><td class="n">${esc(o.qr||'')}</td></tr>`).join('')}</tbody></table></div></div>`;
+      const ofs=R.ofs.slice().sort((x,y)=>(OFORD[norm(x.f)]??9)-(OFORD[norm(y.f)]??9)||String(x.o).localeCompare(String(y.o)));
+      det=pfHero(R,PFSEL)+`
+      <div class="panel"><h2 style="margin:0 0 8px">Composants (${R.rows.length})</h2><div class="tw">${pfTable(R,false)}</div><p class="note" style="margin:8px 0 0">Stock dispo = statut A, tous emplacements. Productible = plus petit (stock ÷ qté de lien), arrondi à l'unité.${R.rows.some(r=>r.diff)?' * La quantité de lien diffère entre OF : celle de l\'OF le plus avancé est utilisée.':''}</p></div>
+      <div class="panel"><h2 style="margin:0 0 8px">Liste des OF (${ofs.length})</h2><div class="tw"><table class="tbl"><thead><tr><th>OF</th><th>Situation</th><th>Qté prévue</th><th>Qté restante</th></tr></thead><tbody>${ofs.map(o=>`<tr><td>${esc(o.o)}</td><td>${esc(o.f)}</td><td class="n">${esc(o.q||'')}</td><td class="n">${esc(o.qr||'')}</td></tr>`).join('')}</tbody></table></div></div>
+      ${SCAN?'<p class="note" style="text-align:center"><button class="lnk" type="button" data-exitscan="1">Ouvrir l\'application complète</button></p>':''}`;
+    }
+  }
+  if(!SCAN){
+    const L=pfFilter(),has=!!norm(PFQ),sel=PFSEL&&norm(PFSEL)===norm(PFQ);
+    if(!has&&!PFSEL)list=`<div class="panel"><p class="note" style="margin:0">Scannez le QR code d'un PF, ou saisissez son code ou sa désignation.</p></div>`;
+    else if(has&&!sel){
+      const V=L.slice(0,12);
+      list=`<div class="panel"><div class="pfl">${V.map(p=>`<button class="lnk" data-pfsel="${esc(p)}" style="text-align:left;display:block;${p===PFSEL?'font-weight:700':''}">${esc(p)} <span class="note">${esc(desc(p))}</span></button>`).join('')||'<span class="note">Aucun PF.</span>'}</div>${L.length>V.length?`<p class="note" style="margin:6px 0 0">Précisez la saisie pour voir les autres.</p>`:''}${L.length?`<div class="row" style="margin-top:8px"><button class="btn ghost" type="button" data-pflbl="1">Imprimer les étiquettes QR de cette recherche</button></div>`:''}</div>`;
     }
   }
   el.innerHTML=list+det;
 }
-function pfOpen(p){
-  PFSEL=p;document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab==='pf'));
+function pfOpen(p,scan){
+  PFSEL=p;
+  if(scan){SCAN=true;document.body.classList.add('scan');document.title='PF '+p}
+  document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab==='pf'));
   for(const k of ['plan','pairs','move','pf'])$('v-'+k).hidden=k!=='pf';
   renderPf();
 }
 function pfFromUrl(){
   let v=null;
   try{const m=(location.hash+'&'+location.search).match(/pf=([^&#]+)/);if(m)v=decodeURIComponent(m[1])}catch(e){}
-  if(v)pfOpen(v);
+  if(v)pfOpen(v,true);
 }
 document.addEventListener('click',e=>{
-  const s=e.target.closest('[data-pfsel]');if(s){PFSEL=s.dataset.pfsel;renderPf();return}
+  if(e.target.closest('[data-exitscan]')){SCAN=false;document.body.classList.remove('scan');document.title='Magasin C1 Corps et Manchons';try{history.replaceState(null,'',location.pathname+location.search)}catch(x){}renderPf();return}
+  const s=e.target.closest('[data-pfsel]');if(s){PFSEL=s.dataset.pfsel;PFQ=PFSEL;const i=$('pfq');if(i)i.value=PFSEL;renderPf();return}
   if(e.target.closest('[data-pfprint]')){$('psheets').innerHTML=pfSheet(PFSEL);try{window.print()}catch(x){alert('Impression bloquée : ouvrez la page dans un nouvel onglet.')}return}
   if(e.target.closest('[data-pflbl]')){const q=norm(PFQ),act=$('pfact')?.checked,P=bomIndex();let L=[...P.keys()];if(act)L=L.filter(p=>[...P.get(p).ofs.values()].some(o=>['en cours','en attente','edite'].includes(norm(o.f))));if(q)L=L.filter(p=>norm(p).includes(q)||norm(desc(p)).includes(q));L.sort();$('psheets').innerHTML=pfLabels(L.slice(0,240));try{window.print()}catch(x){alert('Impression bloquée : ouvrez la page dans un nouvel onglet.')}return}
 });
-document.addEventListener('input',e=>{if(e.target.id==='pfq'){PFQ=e.target.value;renderPf()}});
+document.addEventListener('input',e=>{if(e.target.id==='pfq'){
+  let v=e.target.value.trim();const m=v.match(/pf=([^&#\s]+)/);
+  if(m){try{v=decodeURIComponent(m[1])}catch(x){v=m[1]}e.target.value=v}
+  PFQ=v;const hit=[...bomIndex().keys()].find(p=>norm(p)===norm(v));if(hit)PFSEL=hit;
+  renderPf()}});
 document.addEventListener('change',e=>{if(e.target.id==='pfact')renderPf()});
 
 build();pfFromUrl();
+window.addEventListener('hashchange',pfFromUrl);
 </script>
 </body>
 </html>
