@@ -177,17 +177,18 @@ textarea.out{width:100%;min-height:90px;border:1px solid var(--line);border-radi
 /* ---- fiche PF (supervision) ---- */
 .pfhero{display:flex;flex-direction:column;gap:12px}
 .pfh-top{display:flex;gap:16px;justify-content:space-between;align-items:flex-start}
-.pfh-code{font:700 26px var(--mono);overflow-wrap:anywhere}
+.pfh-code{font:800 32px var(--mono);color:var(--ink);letter-spacing:.01em;overflow-wrap:anywhere}
+.pfh-ofpf{font:800 17px var(--mono);color:var(--ink)}
 .pfh-desc{color:var(--muted);font-size:15px;margin-top:2px}
 .pfh-prod{border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;border:2px solid var(--good);background:color-mix(in srgb,var(--good) 12%,var(--surface))}
 .pfh-prod.ko{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--surface))}
 .pfh-lbl{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .pfh-prod b{font:700 56px/1.05 var(--mono)}
-.pfh-lim{font-size:14px}
+.pfh-lim{font-size:12px;font-weight:700}
 .pfh-dates{margin:0;font-size:14px;color:var(--muted)}
 .pfh-dates b{color:var(--ink)}
 body.scan header,body.scan .top,body.scan section[aria-label="Saisie"],body.scan .tabs,body.scan #v-plan,body.scan #v-pairs,body.scan #v-move,body.scan #v-pf .toolbar,body.scan .drawer{display:none!important}
-body.scan .pfh-code{font-size:30px}
+body.scan .pfh-code{font-size:34px}
 @media (max-width:520px){.pfh-prod b{font-size:46px}}
 </style>
 
@@ -1308,12 +1309,14 @@ function pfFilter(){
 }
 function pfHero(R,p){
   const dI=S.meta.inv?.d||'date inconnue',dO=S.meta.of?.d||'date inconnue';
-  const ok=R.prod!==null&&R.prod>0;
-  const lim=R.limiting.slice(0,3).map(c=>`<b>${esc(c)}</b>`).join(', ');
   return `<div class="panel pfhero"><div class="pfh-top"><div><div class="pfh-code">${esc(p)}</div><div class="pfh-desc">${esc(desc(p))}</div></div>${SCAN?'':`<div>${qrSvg(pfUrl(p),96)}</div>`}</div>
-  <div class="pfh-prod ${ok?'ok':'ko'}"><span class="pfh-lbl">Quantité productible</span><b>${R.prod===null?'—':fmt(R.prod)}</b><span class="pfh-lim">${R.limiting.length?'Composant limitant : '+lim:'Aucune quantité de lien connue.'}</span></div>
   <p class="pfh-dates">Stock au <b>${esc(dI)}</b> · Liste des OF au <b>${esc(dO)}</b></p>
   ${SCAN?'':'<div class="row"><button class="btn ghost" type="button" data-pfprint="1">Imprimer la fiche</button></div>'}</div>`;
+}
+function pfProd(R){
+  const ok=R.prod!==null&&R.prod>0;
+  const lim=R.limiting.slice(0,3).map(esc).join(', ');
+  return `<div class="panel"><div class="pfh-prod ${ok?'ok':'ko'}"><span class="pfh-lbl">Quantité productible</span><b>${R.prod===null?'—':fmt(R.prod)}</b><span class="pfh-lim">${R.limiting.length?'Composant limitant : '+lim:'Aucune quantité de lien connue.'}</span></div></div>`;
 }
 function renderPf(){
   const el=$('pfbody');if(!el)return;
@@ -1324,8 +1327,9 @@ function renderPf(){
     else{
       const ofs=R.ofs.slice().sort((x,y)=>(OFORD[norm(x.f)]??9)-(OFORD[norm(y.f)]??9)||String(x.o).localeCompare(String(y.o)));
       det=pfHero(R,PFSEL)+`
+      <div class="panel"><h2 style="margin:0 0 8px">Liste des OF (${ofs.length}) · PF <b class="pfh-ofpf">${esc(PFSEL)}</b></h2><div class="tw"><table class="tbl"><thead><tr><th>OF</th><th>Situation</th><th>Qté prévue</th><th>Qté restante</th></tr></thead><tbody>${ofs.map(o=>`<tr><td>${esc(o.o)}</td><td>${esc(o.f)}</td><td class="n">${esc(o.q||'')}</td><td class="n">${esc(o.qr||'')}</td></tr>`).join('')}</tbody></table></div></div>
+      ${pfProd(R)}
       <div class="panel"><h2 style="margin:0 0 8px">Composants (${R.rows.length})</h2><div class="tw">${pfTable(R,false)}</div><p class="note" style="margin:8px 0 0">Stock dispo = statut A, tous emplacements. Productible = plus petit (stock ÷ qté de lien), arrondi à l'unité.${R.rows.some(r=>r.diff)?' * La quantité de lien diffère entre OF : celle de l\'OF le plus avancé est utilisée.':''}</p></div>
-      <div class="panel"><h2 style="margin:0 0 8px">Liste des OF (${ofs.length})</h2><div class="tw"><table class="tbl"><thead><tr><th>OF</th><th>Situation</th><th>Qté prévue</th><th>Qté restante</th></tr></thead><tbody>${ofs.map(o=>`<tr><td>${esc(o.o)}</td><td>${esc(o.f)}</td><td class="n">${esc(o.q||'')}</td><td class="n">${esc(o.qr||'')}</td></tr>`).join('')}</tbody></table></div></div>
       ${SCAN?'<p class="note" style="text-align:center"><button class="lnk" type="button" data-exitscan="1">Ouvrir l\'application complète</button></p>':''}`;
     }
   }
