@@ -174,6 +174,8 @@ header{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-co
 .art .m{grid-column:1/-1;color:var(--muted);font:12px var(--mono)}
 textarea.out{width:100%;min-height:90px;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:8px;font:12px var(--mono)}
 
+/* ---- enregistrement partagé ---- */
+.share{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 /* ---- fiche PF (supervision) ---- */
 #v-pf{max-width:920px;margin-inline:auto;width:100%}
 .pfhero{position:relative;gap:10px;padding:18px 20px 16px 24px;overflow:hidden}
@@ -237,6 +239,22 @@ body.scan .wrap,body.scan #v-pf{max-width:none;width:100%}
       </label>
       <div class="src" id="src"></div>
       <p class="err" id="err" hidden></p>
+      <div class="share" id="share">
+        <p class="lbl" style="margin:0 0 6px">Enregistrement partagé</p>
+        <p class="note" id="shst" style="margin:0 0 8px"></p>
+        <div class="row"><button class="btn" type="button" id="shpub">Publier pour tous</button><button class="btn ghost" type="button" id="shcfg">Paramètres GitHub</button></div>
+        <div id="shform" hidden style="margin-top:10px">
+          <div class="filters">
+            <label class="fld">Dépôt (compte/nom)<input type="text" id="ghrepo" placeholder="moncompte/magasin" style="width:190px"></label>
+            <label class="fld">Branche<input type="text" id="ghbr" placeholder="main" style="width:90px"></label>
+            <label class="fld">Fichier de données<input type="text" id="ghpath" placeholder="data.json" style="width:130px"></label>
+            <label class="fld">Jeton GitHub<input type="password" id="ghtok" autocomplete="off" placeholder="github_pat_…" style="width:210px"></label>
+          </div>
+          <div class="row" style="margin-top:8px"><button class="btn" type="button" id="ghsave">Enregistrer les paramètres</button></div>
+          <p class="note" style="margin:6px 0 0;font-size:12px">Le jeton reste uniquement dans ce navigateur. Créez un jeton « fine-grained » limité à ce dépôt, avec la permission Contents : lecture et écriture.</p>
+        </div>
+        <p class="note" id="shmsg" style="margin:8px 0 0"></p>
+      </div>
     </section>
     <section class="panel" aria-label="Règle de rangement">
       <p class="lbl">Règle de rangement</p>
@@ -1030,6 +1048,7 @@ function kpis(){
 function src(){
   const row=(k,m,u)=>`<div><span class="k">${k}</span><span class="m">${m.n?`${fmt(m.n)} ${u} · ${esc(m.d||'date inconnue')} · ${esc(m.name)}`:'non chargé'}</span></div>`;
   $('src').innerHTML=row('Inventaire des emplacements',S.meta.inv,'lignes C1')+row('Liste des OF',S.meta.of,'lignes corps / manchon')+row('Gamme de fabrication',S.meta.gam,'désignations');
+  const st=$('shst');if(st)st.textContent=S.shared?'Dernier enregistrement partagé : '+new Date(S.shared).toLocaleString('fr-FR')+'. Tous les utilisateurs ouvrent ces données.':'Aucun enregistrement partagé : les utilisateurs voient les données intégrées à l\'application.';
 }
 function renderAll(){kpis();renderMove();renderRes();renderAsg();renderPlan();renderPairs();src()}
 /* ---- files ---- */
@@ -1066,6 +1085,7 @@ async function load(files){
   }
   if(msg.length){er.textContent=msg.join(' · ');er.hidden=false}
   build();
+  if(files.length>msg.length)shAfterLoad();
 }
 /* ---- events ---- */
 $('files').addEventListener('change',e=>{load([...e.target.files]);e.target.value=''});
@@ -1395,7 +1415,73 @@ document.addEventListener('input',e=>{if(e.target.id==='pfq'){
   renderPf()}});
 document.addEventListener('change',e=>{if(e.target.id==='pfact')renderPf()});
 
-build();pfFromUrl();
+/* ---- enregistrement partagé via GitHub (data.json) ---- */
+const SHKEY='c1-gh',SHDEF=()=>{let repo='';const m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split('/')[1];if(m)repo=m[1]+'/'+(seg||m[1]+'.github.io');return {repo,branch:'',path:'data.json',token:''}};
+const shCfg=()=>({...SHDEF(),...lsGet(SHKEY,{})});
+const shMsg=(t,bad)=>{const e=$('shmsg');if(e){e.textContent=t;e.style.color=bad?'var(--bad)':''}};
+const shOpen=()=>{const c=shCfg();$('ghrepo').value=c.repo;$('ghbr').value=c.branch;$('ghpath').value=c.path;$('ghtok').value=c.token;$('shform').hidden=false};
+const shSnap=()=>({v:1,saved:new Date().toISOString(),stk:S.stk,of:S.of,inv:S.inv,idesc:S.idesc,gam:S.gam,meta:S.meta});
+function shApply(d){
+  if(!d||d.v!==1||!Array.isArray(d.inv)||!Array.isArray(d.of)||!d.inv.length||!d.of.length)return false;
+  S.stk=d.stk||S.stk;S.of=d.of;S.inv=d.inv;S.idesc=d.idesc||{};S.gam=d.gam||{};S.meta={...S.meta,...(d.meta||{})};S.shared=d.saved;BI=null;
+  const sig=(d.meta?.inv?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
+  if(prev!==null&&prev!==sig){S.mv={};S.asg={};saveMv();saveAsg()}
+  lsSet('c1-invsig',sig);return true;
+}
+async function shFetch(){
+  if(!/^https?:$/.test(location.protocol))return false;
+  try{const r=await fetch(new URL(shCfg().path||'data.json',location.href).href+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)return false;return shApply(await r.json())}catch(e){return false}
+}
+const shB64=str=>{const u=new TextEncoder().encode(str);let b='';for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)};
+async function shPublish(){
+  const c=shCfg();
+  if(!c.repo||!c.token){shOpen();shMsg('Renseignez le dépôt et le jeton GitHub, puis enregistrez les paramètres.',true);return}
+  const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
+  try{
+    const snap=shSnap(),content=shB64(JSON.stringify(snap));
+    const api='https://api.github.com/repos/'+c.repo+'/contents/'+c.path.split('/').map(encodeURIComponent).join('/');
+    const H={Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json','Content-Type':'application/json'};
+    let ok=false,last=0;
+    for(let i=0;i<2&&!ok;i++){
+      const g=await fetch(api+(c.branch?'?ref='+encodeURIComponent(c.branch):''),{headers:H,cache:'no-store'});
+      if(g.status===401||g.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
+      const sha=g.ok?(await g.json()).sha:undefined;
+      const body={message:'Mise à jour des données '+new Date().toLocaleString('fr-FR'),content,...(c.branch?{branch:c.branch}:{}),...(sha?{sha}:{})};
+      const r=await fetch(api,{method:'PUT',headers:H,body:JSON.stringify(body)});
+      last=r.status;
+      if(r.ok){ok=true;break}
+      if(r.status===401||r.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
+      if(r.status===404)throw new Error('Dépôt, branche ou chemin introuvable : vérifiez les paramètres.');
+      if(r.status!==409&&r.status!==422)throw new Error('GitHub a répondu '+r.status+'.');
+    }
+    if(!ok)throw new Error('Conflit d\'écriture (code '+last+'), réessayez.');
+    S.shared=snap.saved;src();
+    shMsg('Données publiées pour tous. Les autres utilisateurs les verront dans 1 à 2 minutes, le temps que GitHub Pages se mette à jour.');
+  }catch(e){shMsg('Échec de la publication : '+e.message,true)}
+  finally{btn.disabled=false}
+}
+function shAfterLoad(){
+  const c=shCfg();
+  if(c.repo&&c.token)shPublish();
+  else{shOpen();shMsg('Fichiers chargés sur cet appareil seulement. Renseignez les paramètres GitHub pour les enregistrer pour tous.',true)}
+}
+$('shpub').addEventListener('click',shPublish);
+$('shcfg').addEventListener('click',()=>{const f=$('shform');if(f.hidden)shOpen();else f.hidden=true});
+$('ghsave').addEventListener('click',()=>{
+  const v=x=>$(x).value.trim(),repo=v('ghrepo').replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/+$/,'');
+  if(!/^[^\/\s]+\/[^\/\s]+$/.test(repo)){shMsg('Dépôt invalide : saisissez compte/nom.',true);return}
+  lsSet(SHKEY,{repo,branch:v('ghbr'),path:v('ghpath')||'data.json',token:v('ghtok')});
+  $('shform').hidden=true;shMsg('Paramètres enregistrés. Cliquez sur « Publier pour tous » pour enregistrer les données actuelles.');
+});
+/* démarrage : un QR scanné attend les données partagées avant d'afficher la fiche */
+if(/pf=/.test(location.hash+location.search)){
+  document.body.classList.add('scan');$('v-pf').hidden=false;
+  $('pfbody').innerHTML='<div class="panel"><p class="note" style="margin:0">Chargement du stock…</p></div>';
+  Promise.race([shFetch(),new Promise(r=>setTimeout(r,4000))]).then(()=>{build();pfFromUrl()});
+}else{
+  build();pfFromUrl();
+  shFetch().then(ok=>{if(ok){build();renderPf()}});
+}
 window.addEventListener('hashchange',pfFromUrl);
 </script>
 </body>
