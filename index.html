@@ -209,7 +209,13 @@ textarea.out{width:100%;min-height:90px;border:1px solid var(--line);border-radi
 body.scan header,body.scan .top,body.scan section[aria-label="Saisie"],body.scan .tabs,body.scan #v-plan,body.scan #v-pairs,body.scan #v-move,body.scan #v-pf .toolbar,body.scan .drawer,body.scan #psheets,body.scan #pfab{display:none!important}
 body.scan .wrap,body.scan #v-pf{max-width:none;width:100%}
 .pfcard .tbl{width:100%;font-size:14px}
-.pfcard .tbl td:nth-child(2){width:100%}
+#v-pf .pfcard .tw{overflow-x:visible}
+.pfcomp .tbl{font-size:12px}
+.pfcomp .tbl th{white-space:normal;padding:6px 4px;font-size:10px;line-height:1.15;vertical-align:bottom}
+.pfcomp .tbl td{padding:6px 4px}
+.pfcomp .tbl td:nth-child(2){width:100%;overflow-wrap:anywhere}
+.pfcomp .tbl td.n,.pfcomp .tbl td:first-child{white-space:nowrap}
+@media (max-width:520px){.pfcomp .tbl{font-size:10.5px}.pfcomp .tbl th{font-size:8.5px}.pfcomp .tbl td,.pfcomp .tbl th{padding:5px 3px}}
 @media (max-width:520px){.pfh-prod b{font-size:52px}.pfh-code{font-size:28px}}
 </style>
 
@@ -1351,7 +1357,7 @@ function renderPf(){
       det=pfHero(R,PFSEL)+`
       <div class="panel pfcard"><h2>Liste des OF · PF <span class="pfh-ofpf">${esc(PFSEL)}</span><span class="cnt">${ofs.length}</span></h2><div class="tw"><table class="tbl"><thead><tr><th>OF</th><th>Situation</th><th class="n">Qté prévue</th><th class="n">Qté restante</th></tr></thead><tbody>${ofs.map(o=>`<tr><td class="ofn">${esc(o.o)}</td><td>${ofBadge(o.f)}</td><td class="n">${esc(o.q||'')}</td><td class="n">${esc(o.qr||'')}</td></tr>`).join('')}</tbody></table></div></div>
       ${pfProd(R)}
-      <div class="panel pfcard"><h2>Composants<span class="cnt">${R.rows.length}</span></h2><div class="tw">${pfTable(R,false)}</div><p class="note" style="font-size:12px">Stock dispo = statut A, tous emplacements. Productible = plus petit (stock ÷ qté de lien), arrondi à l'unité.${R.rows.some(r=>r.diff)?' * La quantité de lien diffère entre OF : celle de l\'OF le plus avancé est utilisée.':''}</p></div>`;
+      <div class="panel pfcard"><h2>Composants<span class="cnt">${R.rows.length}</span></h2><div class="tw pfcomp">${pfTable(R,false)}</div><p class="note" style="font-size:12px">Stock dispo = statut A, tous emplacements. Productible = plus petit (stock ÷ qté de lien), arrondi à l'unité.${R.rows.some(r=>r.diff)?' * La quantité de lien diffère entre OF : celle de l\'OF le plus avancé est utilisée.':''}</p></div>`;
     }
   }
   if(!SCAN){
