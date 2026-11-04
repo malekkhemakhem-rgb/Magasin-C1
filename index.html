@@ -242,16 +242,13 @@ body.scan .wrap,body.scan #v-pf{max-width:none;width:100%}
       <div class="share" id="share">
         <p class="lbl" style="margin:0 0 6px">Enregistrement partagé</p>
         <p class="note" id="shst" style="margin:0 0 8px"></p>
-        <div class="row"><button class="btn" type="button" id="shpub">Publier pour tous</button><button class="btn ghost" type="button" id="shcfg">Paramètres GitHub</button></div>
-        <div id="shform" hidden style="margin-top:10px">
-          <div class="filters">
-            <label class="fld">Dépôt (compte/nom)<input type="text" id="ghrepo" placeholder="moncompte/magasin" style="width:190px"></label>
-            <label class="fld">Branche<input type="text" id="ghbr" placeholder="main" style="width:90px"></label>
-            <label class="fld">Dossier des fichiers<input type="text" id="ghpath" placeholder="data" style="width:110px"></label>
-            <label class="fld">Jeton GitHub<input type="password" id="ghtok" autocomplete="off" placeholder="github_pat_…" style="width:210px"></label>
+        <div id="shadmin">
+          <div class="filters" id="shlogin">
+            <label class="fld">E-mail administrateur<input type="email" id="fbmail" autocomplete="username" style="width:210px"></label>
+            <label class="fld">Mot de passe<input type="password" id="fbpass" autocomplete="current-password" style="width:160px"></label>
+            <button class="btn" type="button" id="fblogin">Se connecter</button>
           </div>
-          <div class="row" style="margin-top:8px"><button class="btn" type="button" id="ghsave">Enregistrer les paramètres</button></div>
-          <p class="note" style="margin:6px 0 0;font-size:12px">Le jeton reste uniquement dans ce navigateur. Créez un jeton « fine-grained » limité à ce dépôt, avec la permission Contents : lecture et écriture.</p>
+          <div class="row" id="shlogged" hidden><span class="note" id="fbwho" style="margin:0"></span><button class="btn" type="button" id="shpub">Publier pour tous</button><button class="btn ghost" type="button" id="fblogout">Se déconnecter</button></div>
         </div>
         <p class="note" id="shmsg" style="margin:8px 0 0"></p>
       </div>
@@ -1048,7 +1045,7 @@ function kpis(){
 function src(){
   const row=(k,m,u)=>`<div><span class="k">${k}</span><span class="m">${m.n?`${fmt(m.n)} ${u} · ${esc(m.d||'date inconnue')} · ${esc(m.name)}`:'non chargé'}</span></div>`;
   $('src').innerHTML=row('Inventaire des emplacements',S.meta.inv,'lignes C1')+row('Liste des OF',S.meta.of,'lignes corps / manchon')+row('Gamme de fabrication',S.meta.gam,'désignations');
-  const st=$('shst');if(st)st.textContent=S.shared?'Dernier enregistrement partagé : '+new Date(S.shared).toLocaleString('fr-FR')+'. Tous les utilisateurs ouvrent ces données.':'Aucun fichier partagé trouvé : les utilisateurs voient les données intégrées à l\'application.';
+  const st=$('shst');if(st)st.textContent=S.shared?'Dernier enregistrement partagé : '+new Date(S.shared).toLocaleString('fr-FR')+'. Mise à jour automatique chez tous les utilisateurs.':'Aucune donnée partagée trouvée : les utilisateurs voient les données intégrées à l\'application.';
 }
 function renderAll(){kpis();renderMove();renderRes();renderAsg();renderPlan();renderPairs();src()}
 /* ---- files ---- */
@@ -1423,91 +1420,118 @@ document.addEventListener('input',e=>{if(e.target.id==='pfq'){
   renderPf()}});
 document.addEventListener('change',e=>{if(e.target.id==='pfact')renderPf()});
 
-/* ---- enregistrement partagé : les fichiers Excel chargés remplacent ceux du dépôt GitHub ---- */
-const SHKEY='c1-gh',KINDS={inv:'inventaire.xlsx',of:'of.xlsx',gam:'gamme.xlsx'},KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'},POLL_MS=60000;
-const SHDEF=()=>{let repo='';const m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split('/')[1];if(m)repo=m[1]+'/'+(seg||m[1]+'.github.io');return {repo,branch:'',path:'data',token:''}};
-const shCfg=()=>{const c={...SHDEF(),...lsGet(SHKEY,{})};if(!c.path||/\.json$/i.test(c.path))c.path='data';c.path=c.path.replace(/^\/+|\/+$/g,'');return c};
+/* ---- enregistrement partagé en temps réel : Firebase Realtime Database ---- */
+/* >>> À RENSEIGNER UNE FOIS (voir les étapes de configuration) : */
+const FB_URL='https://magasin-c1-default-rtdb.europe-west1.firebasedatabase.app/';      /* ex. https://mon-projet-default-rtdb.europe-west1.firebasedatabase.app */
+const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';      /* clé API Web du projet Firebase (AIza…) */
+/* <<< */
+const FBROOT='c1',KINDS=['inv','of','gam'],KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'};
+const fbOn=()=>!!(FB_URL&&FB_KEY),fbDb=p=>FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'/'+p+'.json';
+const SHT={};            /* horodatage (t) des données partagées déjà appliquées, par fichier */
 const shMsg=(t,bad)=>{const e=$('shmsg');if(e){e.textContent=t;e.style.color=bad?'var(--bad)':''}};
-const shOpen=()=>{const c=shCfg();$('ghrepo').value=c.repo;$('ghbr').value=c.branch;$('ghpath').value=c.path;$('ghtok').value=c.token;$('shform').hidden=false};
-const shUrl=(c,k)=>new URL(c.path+'/'+KINDS[k],location.href).href+'?t='+Date.now();
-const SHMOD={};
-async function shFetch(){
-  if(!/^https?:$/.test(location.protocol))return false;
-  const c=shCfg();let any=false,latest=0;
-  const L=await Promise.all(Object.keys(KINDS).map(async k=>{
-    try{
-      const r=await fetch(shUrl(c,k),{cache:'no-store'});
-      if(!r.ok)return null;
-      const lm=r.headers.get('last-modified')||'',t=Date.parse(lm);if(t>latest)latest=t;SHMOD[k]=lm;
-      return {k,buf:await r.arrayBuffer()};
-    }catch(e){return null}
-  }));
-  /* OF et gamme d'abord, inventaire en dernier (il commande la réinitialisation des rangements) */
-  for(const k of ['gam','of','inv']){const x=L.find(y=>y&&y.k===k);if(!x)continue;try{ingest(KINDS[k],x.buf,{shared:true});any=true}catch(e){}}
-  if(any)S.shared=new Date(latest||Date.now()).toISOString();
-  return any;
+let FBA=lsGet('c1-fbauth',null),FBID=null,FBEXP=0;   /* FBA = {email, refresh} */
+function shUi(){
+  const ad=$('shadmin');if(!ad)return;
+  if(!fbOn()){ad.hidden=true;shMsg('Firebase non configuré : renseignez FB_URL et FB_KEY dans index.html.',true);return}
+  $('shlogin').hidden=!!FBA;$('shlogged').hidden=!FBA;if(FBA)$('fbwho').textContent='Connecté : '+FBA.email;
 }
-async function shPoll(){
-  if(!/^https?:$/.test(location.protocol))return;
-  const c=shCfg();
+async function fbPost(url,body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||('erreur '+r.status));return j;
+}
+async function fbLogin(email,pass){
   try{
-    for(const k of Object.keys(KINDS)){
-      const r=await fetch(shUrl(c,k),{method:'HEAD',cache:'no-store'});
-      if(!r.ok)continue;
-      const lm=r.headers.get('last-modified')||'';
-      if(lm&&SHMOD[k]&&lm!==SHMOD[k]){if(await shFetch()){build();renderPf();src()}return}
-      if(lm&&!SHMOD[k])SHMOD[k]=lm;
-    }
-  }catch(e){}
+    const j=await fbPost('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_KEY,{email,password:pass,returnSecureToken:true});
+    FBA={email:j.email,refresh:j.refreshToken};FBID=j.idToken;FBEXP=Date.now()+(+j.expiresIn-60)*1000;lsSet('c1-fbauth',FBA);return true;
+  }catch(e){shMsg(/INVALID|NOT_FOUND|PASSWORD|CREDENTIAL/.test(e.message)?'Identifiants incorrects.':'Connexion impossible : '+e.message,true);return false}
 }
-const shB64=buf=>{const u=new Uint8Array(buf);let b='';for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)};
+async function fbToken(){
+  if(!FBA)throw new Error('non connecté');
+  if(FBID&&Date.now()<FBEXP)return FBID;
+  const r=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(FBA.refresh)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){FBA=null;lsSet('c1-fbauth',null);shUi();throw new Error('session expirée, reconnectez-vous')}
+  FBID=j.id_token;FBEXP=Date.now()+(+j.expires_in-60)*1000;return FBID;
+}
+/* ---- lecture : applique ce qui a changé dans la base ---- */
+function shApplyKind(k,d){
+  if(k==='inv'){
+    S.inv=d.inv;S.idesc=d.idesc||{};S.stk=d.stk||S.stk;S.meta.inv=d.meta;
+    const sig=(d.meta?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
+    if(prev!==null&&prev!==sig){S.mv={};S.asg={};saveMv();saveAsg()}
+    lsSet('c1-invsig',sig);
+  }else if(k==='of'){BI=null;S.of=d.of;S.meta.of=d.meta}
+  else if(k==='gam'){S.gam=d.gam;S.meta.gam=d.meta}
+}
+let SHBUSY=null;
+function shFetch(){
+  if(!fbOn()||!/^https?:$/.test(location.protocol))return Promise.resolve(false);
+  if(SHBUSY)return SHBUSY;
+  SHBUSY=(async()=>{
+    let any=false;
+    try{
+      const mr=await fetch(fbDb('meta')+'?t='+Date.now(),{cache:'no-store'});
+      const meta=mr.ok?await mr.json():null;if(!meta)return false;
+      let latest=0;
+      for(const k of ['gam','of','inv']){           /* l'inventaire en dernier */
+        const t=meta[k]?.t;if(!t)continue;if(t>latest)latest=t;
+        if(SHT[k]===t)continue;
+        try{
+          const r=await fetch(fbDb(k)+'?t='+Date.now(),{cache:'no-store'});
+          const node=r.ok?await r.json():null;
+          if(node&&node.d){shApplyKind(k,JSON.parse(node.d));SHT[k]=node.t;any=true}
+        }catch(e){}
+      }
+      if(latest)S.shared=new Date(latest).toISOString();
+    }catch(e){return false}
+    return any;
+  })().finally(()=>{SHBUSY=null});
+  return SHBUSY;
+}
+async function shRefresh(){if(await shFetch()){build();renderPf();src()}}
+function shListen(){
+  if(!fbOn()||typeof EventSource==='undefined'||!/^https?:$/.test(location.protocol))return;
+  try{const es=new EventSource(fbDb('meta'));let tm=null;
+    const go=()=>{clearTimeout(tm);tm=setTimeout(shRefresh,400)};
+    es.addEventListener('put',go);es.addEventListener('patch',go);
+  }catch(e){}
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')shRefresh()});
+}
+/* ---- écriture : réservée au compte administrateur ---- */
+function shPayload(k){
+  if(k==='inv')return {inv:S.inv,idesc:S.idesc,stk:S.stk,meta:S.meta.inv};
+  if(k==='of')return {of:S.of,meta:S.meta.of};
+  return {gam:S.gam,meta:S.meta.gam};
+}
 async function shPublish(){
-  const c=shCfg(),kinds=Object.keys(S.raw);
-  if(!c.repo||!c.token){shOpen();shMsg('Renseignez le dépôt et le jeton GitHub, puis enregistrez les paramètres.',true);return}
+  const kinds=Object.keys(S.raw);
+  if(!fbOn()){shMsg('Firebase non configuré.',true);return}
+  if(!FBA){shMsg('Connectez-vous avec le compte administrateur pour publier.',true);return}
   if(!kinds.length){shMsg('Aucun nouveau fichier à publier : déposez d\'abord les fichiers Excel.',true);return}
   const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
-  const H={Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json','Content-Type':'application/json'};
-  const done=[];
   try{
-    for(const k of kinds){
-      const api='https://api.github.com/repos/'+c.repo+'/contents/'+(c.path?c.path+'/':'')+KINDS[k];
-      const content=shB64(S.raw[k].buf);let ok=false,last=0;
-      for(let i=0;i<2&&!ok;i++){
-        const g=await fetch(api+(c.branch?'?ref='+encodeURIComponent(c.branch):''),{headers:H,cache:'no-store'});
-        if(g.status===401||g.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
-        const sha=g.ok?(await g.json()).sha:undefined;
-        const body={message:'Mise à jour '+KLAB[k]+' ('+S.raw[k].name+') '+new Date().toLocaleString('fr-FR'),content,...(c.branch?{branch:c.branch}:{}),...(sha?{sha}:{})};
-        const r=await fetch(api,{method:'PUT',headers:H,body:JSON.stringify(body)});
-        last=r.status;
-        if(r.ok){ok=true;break}
-        if(r.status===401||r.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
-        if(r.status===404)throw new Error('Dépôt, branche ou dossier introuvable : vérifiez les paramètres.');
-        if(r.status!==409&&r.status!==422)throw new Error('GitHub a répondu '+r.status+'.');
-      }
-      if(!ok)throw new Error('Conflit d\'écriture sur '+KLAB[k]+' (code '+last+'), réessayez.');
-      done.push(KLAB[k]);delete S.raw[k];
-    }
-    S.shared=new Date().toISOString();src();
-    shMsg('Enregistré pour tous : '+done.join(', ')+'. Les autres utilisateurs le reçoivent automatiquement dans 1 à 2 minutes, le temps que GitHub Pages se mette à jour.');
-  }catch(e){shMsg((done.length?'Déjà publié : '+done.join(', ')+'. ':'')+'Échec de la publication : '+e.message,true)}
+    const tok=await fbToken(),t=Date.now(),upd={};
+    for(const k of kinds){upd[k]={t,d:JSON.stringify(shPayload(k))};upd['meta/'+k]={t}}
+    const r=await fetch(FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'.json?auth='+encodeURIComponent(tok),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(upd)});
+    if(r.status===401||r.status===403)throw new Error('écriture refusée : vérifiez les règles de la base et le compte administrateur.');
+    if(!r.ok)throw new Error('Firebase a répondu '+r.status+'.');
+    for(const k of kinds){SHT[k]=t;delete S.raw[k]}
+    S.shared=new Date(t).toISOString();src();
+    shMsg('Enregistré pour tous : '+kinds.map(k=>KLAB[k]).join(', ')+'. Les utilisateurs qui ont la page ouverte se mettent à jour automatiquement.');
+  }catch(e){shMsg('Échec de la publication : '+e.message,true)}
   finally{btn.disabled=false}
 }
 function shAfterLoad(){
-  const c=shCfg();
-  if(c.repo&&c.token)shPublish();
-  else{shOpen();shMsg('Fichiers chargés sur cet appareil seulement. Renseignez les paramètres GitHub pour les enregistrer pour tous.',true)}
+  if(!fbOn())return;
+  if(FBA)shPublish();else shMsg('Fichiers chargés sur cet appareil seulement. Connectez-vous (compte administrateur) pour les enregistrer pour tous.',true);
 }
 $('shpub').addEventListener('click',shPublish);
-$('shcfg').addEventListener('click',()=>{const f=$('shform');if(f.hidden)shOpen();else f.hidden=true});
-$('ghsave').addEventListener('click',()=>{
-  const v=x=>$(x).value.trim(),repo=v('ghrepo').replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/+$/,'');
-  if(!/^[^\/\s]+\/[^\/\s]+$/.test(repo)){shMsg('Dépôt invalide : saisissez compte/nom.',true);return}
-  lsSet(SHKEY,{repo,branch:v('ghbr'),path:v('ghpath')||'data',token:v('ghtok')});
-  $('shform').hidden=true;shMsg('Paramètres enregistrés. Déposez les fichiers Excel : ils seront publiés automatiquement.');
+$('fblogin').addEventListener('click',async()=>{
+  const m=$('fbmail').value.trim(),p=$('fbpass').value;if(!m||!p){shMsg('Saisissez l\'e-mail et le mot de passe.',true);return}
+  if(await fbLogin(m,p)){$('fbpass').value='';shUi();shMsg(Object.keys(S.raw).length?'Connecté. Publication des fichiers chargés…':'Connecté. Déposez les fichiers Excel : ils seront publiés automatiquement.');if(Object.keys(S.raw).length)shPublish()}
 });
-/* mise à jour dynamique : on vérifie chaque minute (page visible) et au retour sur la page */
-setInterval(()=>{if(document.visibilityState!=='hidden')shPoll()},POLL_MS);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')shPoll()});
+$('fblogout').addEventListener('click',()=>{FBA=null;FBID=null;lsSet('c1-fbauth',null);shUi();shMsg('Déconnecté.')});
+shUi();shListen();
 /* démarrage : un QR scanné attend les données partagées avant d'afficher la fiche */
 if(/pf=/.test(location.hash+location.search)){
   document.body.classList.add('scan');$('v-pf').hidden=false;
