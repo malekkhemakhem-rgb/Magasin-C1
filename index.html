@@ -242,14 +242,7 @@ body.scan .wrap,body.scan #v-pf{max-width:none;width:100%}
       <div class="share" id="share">
         <p class="lbl" style="margin:0 0 6px">Enregistrement partagé</p>
         <p class="note" id="shst" style="margin:0 0 8px"></p>
-        <div id="shadmin">
-          <div class="filters" id="shlogin">
-            <label class="fld">E-mail administrateur<input type="email" id="fbmail" autocomplete="username" style="width:210px"></label>
-            <label class="fld">Mot de passe<input type="password" id="fbpass" autocomplete="current-password" style="width:160px"></label>
-            <button class="btn" type="button" id="fblogin">Se connecter</button>
-          </div>
-          <div class="row" id="shlogged" hidden><span class="note" id="fbwho" style="margin:0"></span><button class="btn" type="button" id="shpub">Publier pour tous</button><button class="btn ghost" type="button" id="fblogout">Se déconnecter</button></div>
-        </div>
+        <div class="row" id="shadmin"><button class="btn" type="button" id="shpub">Publier pour tous</button></div>
         <p class="note" id="shmsg" style="margin:8px 0 0"></p>
       </div>
     </section>
@@ -1429,29 +1422,8 @@ const FBROOT='c1',KINDS=['inv','of','gam'],KLAB={inv:'inventaire',of:'liste des 
 const fbOn=()=>!!(FB_URL&&FB_KEY),fbDb=p=>FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'/'+p+'.json';
 const SHT={};            /* horodatage (t) des données partagées déjà appliquées, par fichier */
 const shMsg=(t,bad)=>{const e=$('shmsg');if(e){e.textContent=t;e.style.color=bad?'var(--bad)':''}};
-let FBA=lsGet('c1-fbauth',null),FBID=null,FBEXP=0;   /* FBA = {email, refresh} */
 function shUi(){
-  const ad=$('shadmin');if(!ad)return;
-  if(!fbOn()){ad.hidden=true;shMsg('Firebase non configuré : renseignez FB_URL et FB_KEY dans index.html.',true);return}
-  $('shlogin').hidden=!!FBA;$('shlogged').hidden=!FBA;if(FBA)$('fbwho').textContent='Connecté : '+FBA.email;
-}
-async function fbPost(url,body){
-  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||('erreur '+r.status));return j;
-}
-async function fbLogin(email,pass){
-  try{
-    const j=await fbPost('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key='+FB_KEY,{email,password:pass,returnSecureToken:true});
-    FBA={email:j.email,refresh:j.refreshToken};FBID=j.idToken;FBEXP=Date.now()+(+j.expiresIn-60)*1000;lsSet('c1-fbauth',FBA);return true;
-  }catch(e){shMsg(/INVALID|NOT_FOUND|PASSWORD|CREDENTIAL/.test(e.message)?'Identifiants incorrects.':'Connexion impossible : '+e.message,true);return false}
-}
-async function fbToken(){
-  if(!FBA)throw new Error('non connecté');
-  if(FBID&&Date.now()<FBEXP)return FBID;
-  const r=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB_KEY,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(FBA.refresh)});
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok){FBA=null;lsSet('c1-fbauth',null);shUi();throw new Error('session expirée, reconnectez-vous')}
-  FBID=j.id_token;FBEXP=Date.now()+(+j.expires_in-60)*1000;return FBID;
+  if(!fbOn()){const ad=$('shadmin');if(ad)ad.hidden=true;shMsg('Firebase non configuré : renseignez FB_URL et FB_KEY dans index.html.',true)}
 }
 /* ---- lecture : applique ce qui a changé dans la base ---- */
 function shApplyKind(k,d){
@@ -1497,7 +1469,7 @@ function shListen(){
   }catch(e){}
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')shRefresh()});
 }
-/* ---- écriture : réservée au compte administrateur ---- */
+/* ---- écriture : tout navigateur qui charge des fichiers remplace les données partagées ---- */
 function shPayload(k){
   if(k==='inv')return {inv:S.inv,idesc:S.idesc,stk:S.stk,meta:S.meta.inv};
   if(k==='of')return {of:S.of,meta:S.meta.of};
@@ -1506,14 +1478,13 @@ function shPayload(k){
 async function shPublish(){
   const kinds=Object.keys(S.raw);
   if(!fbOn()){shMsg('Firebase non configuré.',true);return}
-  if(!FBA){shMsg('Connectez-vous avec le compte administrateur pour publier.',true);return}
   if(!kinds.length){shMsg('Aucun nouveau fichier à publier : déposez d\'abord les fichiers Excel.',true);return}
   const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
   try{
-    const tok=await fbToken(),t=Date.now(),upd={};
+    const t=Date.now(),upd={};
     for(const k of kinds){upd[k]={t,d:JSON.stringify(shPayload(k))};upd['meta/'+k]={t}}
-    const r=await fetch(FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'.json?auth='+encodeURIComponent(tok),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(upd)});
-    if(r.status===401||r.status===403)throw new Error('écriture refusée : vérifiez les règles de la base et le compte administrateur.');
+    const r=await fetch(FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(upd)});
+    if(r.status===401||r.status===403)throw new Error('écriture refusée : vérifiez les règles de la base (".write": true).');
     if(!r.ok)throw new Error('Firebase a répondu '+r.status+'.');
     for(const k of kinds){SHT[k]=t;delete S.raw[k]}
     S.shared=new Date(t).toISOString();src();
@@ -1523,14 +1494,9 @@ async function shPublish(){
 }
 function shAfterLoad(){
   if(!fbOn())return;
-  if(FBA)shPublish();else shMsg('Fichiers chargés sur cet appareil seulement. Connectez-vous (compte administrateur) pour les enregistrer pour tous.',true);
+  shPublish();
 }
 $('shpub').addEventListener('click',shPublish);
-$('fblogin').addEventListener('click',async()=>{
-  const m=$('fbmail').value.trim(),p=$('fbpass').value;if(!m||!p){shMsg('Saisissez l\'e-mail et le mot de passe.',true);return}
-  if(await fbLogin(m,p)){$('fbpass').value='';shUi();shMsg(Object.keys(S.raw).length?'Connecté. Publication des fichiers chargés…':'Connecté. Déposez les fichiers Excel : ils seront publiés automatiquement.');if(Object.keys(S.raw).length)shPublish()}
-});
-$('fblogout').addEventListener('click',()=>{FBA=null;FBID=null;lsSet('c1-fbauth',null);shUi();shMsg('Déconnecté.')});
 shUi();shListen();
 /* démarrage : un QR scanné attend les données partagées avant d'afficher la fiche */
 if(/pf=/.test(location.hash+location.search)){
