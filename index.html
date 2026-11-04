@@ -335,11 +335,14 @@ const norm=s=>String(s??'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+
 const fmt=n=>Number(n).toLocaleString('fr-FR',{maximumFractionDigits:2});
 const EMPTY_META={n:0,d:'—',name:'aucun fichier'};
 const S={stk:{},of:[],inv:[],idesc:{},gam:{},meta:{inv:{...EMPTY_META},of:{...EMPTY_META},gam:{...EMPTY_META}},
-   mode:'n',st:'',q:'',sel:null,comp:null,pick:null,asg:{},raw:{},shared:null};
+   mode:'n',st:'',q:'',sel:null,comp:null,pick:null,asg:{},nc:{},raw:{},shared:null};
 try{S.asg=JSON.parse(localStorage.getItem('c1-asg')||'{}')||{}}catch(e){S.asg={}}
+for(const a of Object.keys(S.asg)){const v=S.asg[a];S.asg[a]=Array.isArray(v)?v:(v?[v]:[]);if(!S.asg[a].length)delete S.asg[a]}   /* ancien format : une seule case par article */
+try{S.nc=JSON.parse(localStorage.getItem('c1-nc')||'{}')||{}}catch(e){S.nc={}}
 try{S.mv=JSON.parse(localStorage.getItem('c1-mv')||'{}')||{}}catch(e){S.mv={}}
 const saveMv=()=>{try{localStorage.setItem('c1-mv',JSON.stringify(S.mv))}catch(e){}};
 const saveAsg=()=>{try{localStorage.setItem('c1-asg',JSON.stringify(S.asg))}catch(e){}};
+const saveNc=()=>{try{localStorage.setItem('c1-nc',JSON.stringify(S.nc))}catch(e){}};
 const desc=a=>S.gam[a]||S.idesc[a]||'';
 const roleOf=a=>{const d=norm(desc(a));return d.startsWith('corps')?'corps':d.startsWith('manchon')?'manchon':d.startsWith('buse')?'buse':null};
 let LOCK=new Set,PMIN=1,PMAX=999;
@@ -376,14 +379,14 @@ function build(){
   for(const R of [RK,RM]){const g=ens(R);for(let i=0;i<nlev;i++)g.lv.add(String.fromCharCode(65+i));g.max=Math.max(g.max,npos)}
   for(const g of Object.values(geo)){const reg=[...g.lv].filter(v=>v!=='Z').sort();const L=[];if(reg.length&&reg[0]==='A'){for(let c=65;c<=reg[reg.length-1].charCodeAt(0);c++)L.push(String.fromCharCode(c))}else L.push(...reg);if(g.lv.has('Z'))L.push('Z');g.L=L}
   rays=Object.keys(geo).sort();mainRays=GL.filter(r=>geo[r]);otherRays=rays.filter(r=>!GL.includes(r));
-  asgAt=new Map;for(const [a,k] of Object.entries(S.asg))(asgAt.get(k)||asgAt.set(k,[]).get(k)).push(a);
+  asgAt=new Map;for(const [a,ks] of Object.entries(S.asg))for(const k of ks)(asgAt.get(k)||asgAt.set(k,[]).get(k)).push(a);
   { const lc=[...occ.keys()].filter(k=>locked(k)&&(k[2]===RK||k[2]===RM));
     const ex=lc.filter(k=>LOCK.has(k)),hr=lc.filter(k=>!LOCK.has(k));
     $('lockcap').textContent=`Cases utilisables : positions ${String(PMIN).padStart(2,'0')} à ${PMAX>=999?'fin':String(PMAX).padStart(2,'0')} dans les rayons ${RK} et ${RM}. ${LOCK.size} emplacement${LOCK.size>1?'s':''} verrouillé${LOCK.size>1?'s':''}`+(ex.length?` (${ex.map(k=>k+' : '+occ.get(k).length+' art.').join(', ')})`:'')+`. ${hr.length} case${hr.length>1?'s':''} occupée${hr.length>1?'s':''} hors intervalle, laissée${hr.length>1?'s':''} telle${hr.length>1?'s':''} quelle${hr.length>1?'s':''}.`}
   pairsBuild();
   renderAll();
 }
-function stockLocs(a){const L=(byArt.get(a)||[]).map(x=>({e:x.e,q:x.q,u:x.u,s:x.s}));if(S.asg[a]&&!L.some(x=>x.e===S.asg[a]))L.push({e:S.asg[a],q:0,u:'',s:'A',v:1});return L}
+function stockLocs(a){const L=(byArt.get(a)||[]).map(x=>({e:x.e,q:x.q,u:x.u,s:x.s}));for(const c of (S.asg[a]||[]))if(!L.some(x=>x.e===c))L.push({e:c,q:0,u:'',s:'A',v:1});return L}
 const stkChips=a=>{const L=stockLocs(a);return L.length?L.map(x=>`<span class="chip stk" title="${x.v?'rangement validé':fmt(x.q)+' '+esc(x.u)}">${x.e}${x.v?'':' · '+fmt(x.q)}</span>`).join(''):'<span class="tag">pas en stock C1</span>'};
 let pfInfo=new Map;
 const STL={'en cours':['En cours','on'],'en attente':['En attente','warn'],'edite':['Édité',''],'solde':['Soldé (fermé)','good']};
@@ -423,7 +426,7 @@ const occArts=k=>[...(occ.get(k)||[]).map(x=>x.a),...(asgAt.get(k)||[])];
 const free=k=>!!k&&!locked(k)&&occArts(k).length===0;
 function stockCells(a){
   const L=(byArt.get(a)||[]).filter(x=>is6(x.e)).sort((x,y)=>(x.s==='A'?0:1)-(y.s==='A'?0:1)||y.q-x.q).map(x=>x.e);
-  const g=S.asg[a];return g?[g,...L.filter(e=>e!==g)]:[...new Set(L)];
+  const g=S.asg[a]||[];return g.length?[...new Set([...g,...L])]:[...new Set(L)];
 }
 function cellState(k,X){
   if(locked(k))return {s:'taken',by:'(verrouillé)'};
@@ -484,6 +487,13 @@ function planBuse(X,mine){
   return {role:'buse',partners,out:fresh,blocked:[],elsewhere:mine.filter(c=>c[2]!==T),T,buses:[]};
 }
 /* ---- saisie ---- */
+const ncOf=X=>{const V=(S.asg[X]||[]).length;return Math.max(V,Math.min(99,Math.max(1,parseInt(S.nc[X])||V||1)))};
+function ncRow(X,P){
+  const N=ncOf(X),g=S.asg[X]||[],V=g.length,L=stockLocs(X).filter(x=>!x.v),n=L.length;
+  const chips=g.map(c=>`<span class="chip stk">${esc(c)} <button class="x" type="button" data-unasg="${esc(c)}" title="Retirer cet emplacement" style="padding:0 5px">×</button></span>`).join('');
+  return `<div class="row"><label class="fld">Nombre de conteneurs à entrer<input type="number" id="nc" min="${Math.max(1,V)}" max="99" value="${N}" style="width:96px"></label><span class="tag ${V>=N?'good':'on'}" style="font-weight:700">${V} / ${N} emplacement${N>1?'s':''} validé${N>1?'s':''}</span>${chips}</div>`
+    +(n?`<p class="note" style="margin:6px 0 0">Déjà en stock C1 : ${n} conteneur${n>1?'s':''} · ${new Set(L.map(x=>x.e)).size} case${new Set(L.map(x=>x.e)).size>1?'s':''}${P.T?` (${stockCells(X).filter(c=>c[2]===P.T&&!g.includes(c)).length} dans le rayon ${P.T}, ${(P.elsewhere||[]).length} à déplacer)`:''}</p>`:'');
+}
 function renderRes(){
   const X=S.comp;
   if(!X){$('res').innerHTML='';return}
@@ -492,17 +502,18 @@ function renderRes(){
   if(!P.role){$('res').innerHTML=`<div class="head"><span class="code" style="font:600 24px var(--mono)">${esc(X)}</span><p>${esc(d||'Désignation inconnue')}</p></div><p class="note" style="margin-top:8px">Ce n'est ni un corps ni un manchon d'après la désignation (elle doit commencer par CORPS ou MANCHON).${cur?' Emplacements actuels en C1 : ':''}${cur}</p>`;return}
   const first=P.out[0];S.pick=P.out.find(o=>o.code===S.pick)?S.pick:first?.code;
   const sel=P.out.find(o=>o.code===S.pick);
-  const partners=P.partners.map(p=>`<tr><td class="m"><button class="lnk" data-c="${esc(p.code)}">${esc(p.code)}</button></td><td>${esc(desc(p.code))}</td><td class="m">${p.n} PF</td><td>${stkChips(p.code)}</td></tr>`).join('');
+  const partners=P.partners.map(p=>`<tr><td class="m"><button class="lnk" data-c="${esc(p.code)}">${esc(p.code)}</button></td><td>${esc(desc(p.code))}</td><td class="m">${p.n} PF</td><td class="m">${stockLocs(p.code).length} case${stockLocs(p.code).length>1?'s':''}</td><td>${stkChips(p.code)}</td></tr>`).join('');
   const props=P.out.map((o,i)=>`<button class="prop ${i===0?'first':''}" data-pk="${o.code}" aria-pressed="${o.code===S.pick}"><span class="loc">${o.code}</span><span class="why">${esc(o.why)}</span><span class="tags">${o.kind==='stock'?'<span class="tag good">déjà en stock ici</span>':o.kind==='valide'?'<span class="tag good">rangement validé</span>':o.kind==='face'?'<span class="tag on">en face du partenaire</span>':o.kind==='pres'?'<span class="tag on">près du manchon</span>':o.kind==='liberer'?'<span class="tag warn">à libérer</span>':'<span class="tag">case libre</span>'}${i===0?'<span class="tag on">1er choix</span>':''}</span></button>`).join('');
-  const act=sel&&(sel.kind==='face'||sel.kind==='new'||sel.kind==='liberer'||sel.kind==='pres')?`<button class="btn" data-ok="1">Valider le rangement en ${sel.code}</button>`:sel&&sel.kind==='valide'?`<button class="btn ghost" data-undo="1">Annuler le rangement validé</button>`:'';
+  const N=ncOf(X),V=(S.asg[X]||[]).length;
+  const act=V>=N?`<span class="tag good">${V} / ${N} emplacement${N>1?'s':''} validé${N>1?'s':''} : tous les conteneurs ont leur case</span>`:(sel&&(sel.kind==='face'||sel.kind==='new'||sel.kind==='liberer'||sel.kind==='pres')?`<button class="btn" data-ok="1">Valider l'emplacement ${V+1}/${N} en ${sel.code}</button>`:'');
   $('res').innerHTML=`<div class="res"><div class="col">
-    <div class="head"><span class="code">${esc(X)}</span><p>${esc(d)}</p><div class="row"><span class="tag on">${P.role}</span>${stkChips(X)}</div></div>
+    <div class="head"><span class="code">${esc(X)}</span><p>${esc(d)}</p><div class="row"><span class="tag on">${P.role}</span>${stkChips(X)}</div><div style="margin-top:8px">${ncRow(X,P)}</div></div>
     <div><p class="lbl">Où le ranger</p><div class="list">${props||'<div class="empty">Aucune case proposée : toutes les paires de cases sont occupées par des articles du bon type.</div>'}</div></div>
     ${P.blocked.length?`<p class="note">${esc(P.blocked.join(' · '))}</p>`:''}
     <div class="row">${act}</div>
     ${P.partners.length?`<div><p class="lbl">${P.role==='manchon'?'Corps':'Manchons'} du même PF</p><div class="tw"><table class="tbl"><tbody>${partners}</tbody></table></div></div>`:'<p class="note">Aucun partenaire trouvé dans les OF chargés pour cette désignation de PF.</p>'}
     ${cur?`<div><p class="lbl">Stock actuel hors du rayon cible (à déplacer)</p>${cur}</div>`:''}
-    ${P.buses&&P.buses.length?`<div><p class="lbl">Buses du même PF (à ranger près de ce manchon)</p><div class="tw"><table class="tbl"><tbody>${P.buses.map(b=>`<tr><td class="m"><button class="lnk" data-c="${esc(b.code)}">${esc(b.code)}</button></td><td>${esc(desc(b.code))}</td><td class="m">${b.n} PF</td><td>${stkChips(b.code)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+    ${P.buses&&P.buses.length?`<div><p class="lbl">Buses du même PF (à ranger près de ce manchon)</p><div class="tw"><table class="tbl"><tbody>${P.buses.map(b=>`<tr><td class="m"><button class="lnk" data-c="${esc(b.code)}">${esc(b.code)}</button></td><td>${esc(desc(b.code))}</td><td class="m">${b.n} PF</td><td class="m">${stockLocs(b.code).length} case${stockLocs(b.code).length>1?'s':''}</td><td>${stkChips(b.code)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
     <div><p class="lbl">PF qui l'utilisent</p>${pfList(pfsOf(X,P.role))}</div>
   </div><div class="col">${sel?mapPair(X,P,sel):''}</div></div>`;
 }
@@ -530,10 +541,10 @@ function mapPair(X,P,sel){
   return `<div class="panel"><div class="ml"><span><i class="sw" style="background:var(--accent)"></i>case proposée (${esc(X)})</span><span><i class="sw" style="outline:2px solid var(--warn)"></i>${P.role==='buse'?'manchon du même PF':'case en face, pour son '+pr}</span><span><i class="sw" style="background:color-mix(in srgb,var(--accent) 45%,var(--surface))"></i>${pr} déjà en stock</span><span><i class="sw" style="background:color-mix(in srgb,var(--muted) 30%,var(--surface))"></i>occupé</span><span><i class="sw" style="background:color-mix(in srgb,var(--good) 35%,var(--surface))"></i>validé</span><span><i class="sw" style="border:1px dashed var(--line)"></i>libre</span></div><div class="scroll">${block(RK,'corps')}${block(RM,'manchon')}</div><p class="note">${P.role==='buse'?'La buse se range dans le même rayon que son manchon, à côté de lui.':'Une même colonne est une même position : le manchon se trouve juste en face de son corps.'}</p></div>`;
 }
 function renderAsg(){
-  const e=Object.entries(S.asg);
+  const e=Object.entries(S.asg).flatMap(([a,ks])=>ks.map((k,i)=>[a,k,i+1,ks.length]));
   if(!e.length){$('asg').innerHTML='';return}
-  const txt=e.map(([a,k])=>`${a}\t${k}\t${desc(a)}`).join('\n');
-  $('asg').innerHTML=`<p class="lbl">Rangements validés (${e.length})</p><textarea class="out" id="out" readonly>${esc(txt)}</textarea><div class="row" style="margin-top:8px"><button class="btn ghost" data-copy="1">Copier la liste</button><button class="btn ghost" data-clear="1">Tout effacer</button><span class="note">Gardés dans ce navigateur uniquement. Ils s'affichent dans le plan jusqu'au prochain inventaire.</span></div>`;
+  const txt=e.map(([a,k,i,n])=>`${a}\t${k}\t${desc(a)}${n>1?'\t'+i+'/'+n:''}`).join('\n');
+  $('asg').innerHTML=`<p class="lbl">Rangements validés (${e.length} emplacement${e.length>1?'s':''} · ${Object.keys(S.asg).length} article${Object.keys(S.asg).length>1?'s':''})</p><textarea class="out" id="out" readonly>${esc(txt)}</textarea><div class="row" style="margin-top:8px"><button class="btn ghost" data-copy="1">Copier la liste</button><button class="btn ghost" data-clear="1">Tout effacer</button><span class="note">Gardés dans ce navigateur uniquement. Ils s'affichent dans le plan jusqu'au prochain inventaire.</span></div>`;
 }
 function suggest(){
   const q=norm($('q').value),box=$('sug');
@@ -1071,7 +1082,7 @@ function ingest(name,buf,opt={}){
     S.inv=inv;S.idesc=id;S.meta.inv={n:inv.length,d:dstr(rws[0][1]),name};
     const sig=S.meta.inv.d+'|'+inv.length,prev=lsGet('c1-invsig',null);
     /* import manuel : on repart de zéro. Données partagées : seulement si l'inventaire a changé */
-    if(!opt.shared||(prev!==null&&prev!==sig)){S.mv={};S.asg={};saveMv();saveAsg()}
+    if(!opt.shared||(prev!==null&&prev!==sig)){S.mv={};S.asg={};S.nc={};saveMv();saveAsg();saveNc()}
     lsSet('c1-invsig',sig);return 'inv';
   }
   throw new Error('type de fichier non reconnu');
@@ -1084,8 +1095,8 @@ async function load(files){
     catch(e){msg.push(f.name+' : '+e.message)}
   }
   if(msg.length){er.textContent=msg.join(' · ');er.hidden=false}
-  build();
   if(ok)shAfterLoad();
+  build();
 }
 /* ---- events ---- */
 $('files').addEventListener('change',e=>{load([...e.target.files]);e.target.value=''});
@@ -1109,15 +1120,15 @@ document.addEventListener('click',e=>{
   const k=e.target.closest('[data-k]');if(k)return openCell(k.dataset.k);
   if(e.target.id==='cl')return closeCell();
   const pk=e.target.closest('[data-pk]');if(pk){S.pick=pk.dataset.pk;renderRes();return}
-  if(e.target.closest('[data-ok]')&&S.comp&&S.pick){S.asg[S.comp]=S.pick;saveAsg();build();return}
-  if(e.target.closest('[data-undo]')&&S.comp){delete S.asg[S.comp];saveAsg();build();return}
+  if(e.target.closest('[data-ok]')&&S.comp&&S.pick){const g=S.asg[S.comp]||(S.asg[S.comp]=[]);if(!g.includes(S.pick)&&g.length<ncOf(S.comp))g.push(S.pick);saveAsg();build();return}
+  {const ua=e.target.closest('[data-unasg]');if(ua&&S.comp){const g=(S.asg[S.comp]||[]).filter(c=>c!==ua.dataset.unasg);if(g.length)S.asg[S.comp]=g;else delete S.asg[S.comp];saveAsg();build();return}}
   const mv=e.target.closest('[data-mv]');if(mv){const [a,f,to]=mv.dataset.mv.split('|');S.mv[a+'|'+f]=to;saveMv();build();return}
   const mu=e.target.closest('[data-mvun]');if(mu){delete S.mv[mu.dataset.mvun];saveMv();build();return}
   {const f=e.target.closest('[data-mvm]');if(f){window.MVM=f.dataset.mvm;renderMove();return}}
   {const f=e.target.closest('[data-mvf]');if(f){window.MVF=f.dataset.mvf;renderMove();return}}
   if(e.target.closest('[data-mvall]')){for(const r of MOVES)if(r.to)S.mv[r.a+'|'+r.from]=r.to;saveMv();build();return}
   if(e.target.closest('[data-copy2]')){const o=$('out2');o.select();(navigator.clipboard?navigator.clipboard.writeText(o.value):Promise.reject()).catch(()=>{});return}
-  if(e.target.closest('[data-clear]')){S.asg={};saveAsg();build();return}
+  if(e.target.closest('[data-clear]')){S.asg={};S.nc={};saveAsg();saveNc();build();return}
   if(e.target.closest('[data-copy]')){const o=$('out');o.select();(navigator.clipboard?navigator.clipboard.writeText(o.value):Promise.reject()).catch(()=>{})}
   const m=e.target.closest('[data-mode]');if(m){S.mode=m.dataset.mode;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b===m));renderPlan()}
   const s=e.target.closest('[data-st]');if(s){S.st=s.dataset.st;document.querySelectorAll('[data-st]').forEach(b=>b.setAttribute('aria-pressed',b===s));renderPlan()}
@@ -1417,12 +1428,15 @@ document.addEventListener('input',e=>{if(e.target.id==='pfq'){
   if(m){try{v=decodeURIComponent(m[1])}catch(x){v=m[1]}e.target.value=v}
   PFQ=v;const hit=[...bomIndex().keys()].find(p=>norm(p)===norm(v));if(hit)PFSEL=hit;
   renderPf()}});
-document.addEventListener('change',e=>{if(e.target.id==='pfact')renderPf()});
+document.addEventListener('change',e=>{
+  if(e.target.id==='pfact')renderPf();
+  if(e.target.id==='nc'&&S.comp){const V=(S.asg[S.comp]||[]).length,n=Math.max(V,1,Math.min(99,parseInt(e.target.value)||1));S.nc[S.comp]=n;saveNc();renderRes()}
+});
 
 /* ---- enregistrement partagé en temps réel : Firebase Realtime Database ---- */
 /* >>> À RENSEIGNER UNE FOIS (voir les étapes de configuration) : */
-const FB_URL='https://magasin-c1-default-rtdb.europe-west1.firebasedatabase.app/';      /* ex. https://mon-projet-default-rtdb.europe-west1.firebasedatabase.app */
-const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';      /* clé API Web du projet Firebase (AIza…) */
+const FB_URL='';      /* ex. https://mon-projet-default-rtdb.europe-west1.firebasedatabase.app */
+const FB_KEY='';      /* clé API Web du projet Firebase (AIza…) */
 /* <<< */
 const FBROOT='c1',KINDS=['inv','of','gam'],KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'};
 const fbOn=()=>!!(FB_URL&&FB_KEY),fbDb=p=>FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'/'+p+'.json';
@@ -1436,7 +1450,7 @@ function shApplyKind(k,d){
   if(k==='inv'){
     S.inv=d.inv;S.idesc=d.idesc||{};S.stk=d.stk||S.stk;S.meta.inv=d.meta;
     const sig=(d.meta?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
-    if(prev!==null&&prev!==sig){S.mv={};S.asg={};saveMv();saveAsg()}
+    if(prev!==null&&prev!==sig){S.mv={};S.asg={};S.nc={};saveMv();saveAsg();saveNc()}
     lsSet('c1-invsig',sig);
   }else if(k==='of'){BI=null;S.of=d.of;S.meta.of={...d.meta,d:fixD(d.meta?.d)}}
   else if(k==='gam'){S.gam=d.gam;S.meta.gam=d.meta}
@@ -1444,6 +1458,16 @@ function shApplyKind(k,d){
 const fk=p=>String(p).replace(/[.$#\[\]\/]/g,'_');
 const SCANURL=/pf=/.test(location.hash+location.search);
 async function shGet(path){const r=await fetch(fbDb(path),{cache:'no-store'});return r.ok?r.json():null}
+const bytesB64=u=>{let b='';for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)};
+async function gzB64(str){                 /* texte -> gzip -> base64 (null si le navigateur ne sait pas compresser) */
+  if(typeof CompressionStream==='undefined')return null;
+  try{const cs=new CompressionStream('gzip'),w=cs.writable.getWriter();w.write(new TextEncoder().encode(str));w.close();
+    return bytesB64(new Uint8Array(await new Response(cs.readable).arrayBuffer()))}catch(e){return null}
+}
+async function gunzB64(b64){
+  const ds=new DecompressionStream('gzip'),w=ds.writable.getWriter();w.write(Uint8Array.from(atob(b64),c=>c.charCodeAt(0)));w.close();
+  return new Response(ds.readable).text();
+}
 let SHBUSY=null;
 function shFetch(){
   if(!fbOn()||!/^https?:$/.test(location.protocol))return Promise.resolve(false);
@@ -1461,7 +1485,7 @@ function shFetch(){
         try{
           let node=pre?await pre[k]:null;
           if(!node||node.t!==t)node=await shGet(k);
-          if(node&&node.d){shApplyKind(k,JSON.parse(node.d));SHT[k]=node.t;any=true}
+          if(node&&node.d){shApplyKind(k,JSON.parse(node.z?await gunzB64(node.d):node.d));SHT[k]=node.t;any=true}
         }catch(e){}
       }
       if(latest)S.shared=new Date(latest).toISOString();
@@ -1526,7 +1550,7 @@ async function shPublish(){
   const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
   try{
     const t=Date.now(),upd={};
-    for(const k of kinds){upd[k]={t,d:JSON.stringify(shPayload(k))};upd['meta/'+k]={t}}
+    for(const k of kinds){const raw=JSON.stringify(shPayload(k)),z=await gzB64(raw);upd[k]=z?{t,d:z,z:1}:{t,d:raw};upd['meta/'+k]={t}}
     const fi=shFiches(t);if(fi){upd.pf=fi;upd['meta/pf']={t}}
     const r=await fetch(FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(upd)});
     if(r.status===401||r.status===403)throw new Error('écriture refusée : vérifiez les règles de la base (".write": true).');
@@ -1551,6 +1575,7 @@ if(SCANURL){
 }else{
   build();
   shFetch().then(ok=>{if(ok){build();renderPf();src()}});
+  setTimeout(()=>ensureXlsx().catch(()=>{}),2500);
 }
 window.addEventListener('hashchange',pfFromUrl);
 </script>
