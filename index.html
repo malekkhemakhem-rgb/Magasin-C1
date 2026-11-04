@@ -1044,6 +1044,8 @@ function renderAll(){kpis();renderMove();renderRes();renderAsg();renderPlan();re
 /* ---- files ---- */
 const sv=v=>v==null?'':String(v).trim();
 const dstr=v=>v instanceof Date?v.toLocaleDateString('fr-FR'):sv(v);
+const tstr=v=>v instanceof Date?String(v.getHours()).padStart(2,'0')+':'+String(v.getMinutes()).padStart(2,'0'):sv(v);
+const fixD=d=>String(d||'').replace(/\s+[A-Z][a-z]{2} [A-Z][a-z]{2} \d+ 1899 (\d\d:\d\d):\d\d.*$/,' $1');
 function ingest(name,buf,opt={}){
   const wb=XLSX.read(buf,{type:'array',cellDates:true});
   const rws=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});
@@ -1059,7 +1061,7 @@ function ingest(name,buf,opt={}){
     const seen=new Set,out=[];
     for(const r of D){if(!r[2]||!r[4])continue;const o={p:sv(r[0]),c:sv(r[4]),o:sv(r[2]),f:sv(r[5]),cc:sv(r[1]),s:sv(r[6])};const k=Object.values(o).join('|');if(seen.has(k))continue;seen.add(k);o.q=sv(r[7]);o.qr=sv(r[9]);o.b=sv(r[10]);out.push(o)}
     if(!out.length)throw new Error('aucune ligne OF avec composant');
-    BI=null;S.of=out;S.meta.of={n:out.length,d:dstr(rws[0][0])+(rws[0][2]?' '+sv(rws[0][2]):''),name};return 'of';
+    BI=null;S.of=out;S.meta.of={n:out.length,d:dstr(rws[0][0])+(rws[0][2]?' '+tstr(rws[0][2]):''),name};return 'of';
   }
   if(H.includes('emplac')){
     const inv=[],id={};
@@ -1432,7 +1434,7 @@ function shApplyKind(k,d){
     const sig=(d.meta?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
     if(prev!==null&&prev!==sig){S.mv={};S.asg={};saveMv();saveAsg()}
     lsSet('c1-invsig',sig);
-  }else if(k==='of'){BI=null;S.of=d.of;S.meta.of=d.meta}
+  }else if(k==='of'){BI=null;S.of=d.of;S.meta.of={...d.meta,d:fixD(d.meta?.d)}}
   else if(k==='gam'){S.gam=d.gam;S.meta.gam=d.meta}
 }
 let SHBUSY=null;
@@ -1478,7 +1480,7 @@ function shPayload(k){
 async function shPublish(){
   const kinds=Object.keys(S.raw);
   if(!fbOn()){shMsg('Firebase non configuré.',true);return}
-  if(!kinds.length){shMsg('Aucun nouveau fichier à publier : déposez d\'abord les fichiers Excel.',true);return}
+  if(!kinds.length){shMsg('Rien de nouveau à publier : vos fichiers sont déjà enregistrés pour tous'+(S.shared?' (le '+new Date(S.shared).toLocaleString('fr-FR')+')':'')+'. Déposez de nouveaux fichiers Excel pour les remplacer.');return}
   const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
   try{
     const t=Date.now(),upd={};
