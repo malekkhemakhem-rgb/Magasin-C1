@@ -247,7 +247,7 @@ body.scan .wrap,body.scan #v-pf{max-width:none;width:100%}
           <div class="filters">
             <label class="fld">Dépôt (compte/nom)<input type="text" id="ghrepo" placeholder="moncompte/magasin" style="width:190px"></label>
             <label class="fld">Branche<input type="text" id="ghbr" placeholder="main" style="width:90px"></label>
-            <label class="fld">Fichier de données<input type="text" id="ghpath" placeholder="data.json" style="width:130px"></label>
+            <label class="fld">Dossier des fichiers<input type="text" id="ghpath" placeholder="data" style="width:110px"></label>
             <label class="fld">Jeton GitHub<input type="password" id="ghtok" autocomplete="off" placeholder="github_pat_…" style="width:210px"></label>
           </div>
           <div class="row" style="margin-top:8px"><button class="btn" type="button" id="ghsave">Enregistrer les paramètres</button></div>
@@ -348,7 +348,7 @@ const fmt=n=>Number(n).toLocaleString('fr-FR',{maximumFractionDigits:2});
 const S={stk:STK0,of:OF0.map(r=>({p:r[0],c:r[1],o:r[2],f:r[3],cc:r[4],s:r[5],q:r[6],qr:r[7],b:r[8]})),
   inv:INV0.map(r=>({a:r[0],d:r[1],q:r[2],u:r[3],s:r[4],c:r[5],t:r[6],e:r[7]})),
   idesc:{},gam:{},meta:{inv:{n:INV0.length,d:META0.inv,name:'fichier fourni'},of:{n:OF0.length,d:META0.of,name:'fichier fourni'},gam:{n:Object.keys(DES0).length,d:META0.gam,name:'désignations intégrées'}},
-  mode:'n',st:'',q:'',sel:null,comp:null,pick:null,asg:{}};
+  mode:'n',st:'',q:'',sel:null,comp:null,pick:null,asg:{},raw:{},shared:null};
 try{S.asg=JSON.parse(localStorage.getItem('c1-asg')||'{}')||{}}catch(e){S.asg={}}
 try{S.mv=JSON.parse(localStorage.getItem('c1-mv')||'{}')||{}}catch(e){S.mv={}}
 const saveMv=()=>{try{localStorage.setItem('c1-mv',JSON.stringify(S.mv))}catch(e){}};
@@ -1048,44 +1048,52 @@ function kpis(){
 function src(){
   const row=(k,m,u)=>`<div><span class="k">${k}</span><span class="m">${m.n?`${fmt(m.n)} ${u} · ${esc(m.d||'date inconnue')} · ${esc(m.name)}`:'non chargé'}</span></div>`;
   $('src').innerHTML=row('Inventaire des emplacements',S.meta.inv,'lignes C1')+row('Liste des OF',S.meta.of,'lignes corps / manchon')+row('Gamme de fabrication',S.meta.gam,'désignations');
-  const st=$('shst');if(st)st.textContent=S.shared?'Dernier enregistrement partagé : '+new Date(S.shared).toLocaleString('fr-FR')+'. Tous les utilisateurs ouvrent ces données.':'Aucun enregistrement partagé : les utilisateurs voient les données intégrées à l\'application.';
+  const st=$('shst');if(st)st.textContent=S.shared?'Dernier enregistrement partagé : '+new Date(S.shared).toLocaleString('fr-FR')+'. Tous les utilisateurs ouvrent ces données.':'Aucun fichier partagé trouvé : les utilisateurs voient les données intégrées à l\'application.';
 }
 function renderAll(){kpis();renderMove();renderRes();renderAsg();renderPlan();renderPairs();src()}
 /* ---- files ---- */
 const sv=v=>v==null?'':String(v).trim();
 const dstr=v=>v instanceof Date?v.toLocaleDateString('fr-FR'):sv(v);
+function ingest(name,buf,opt={}){
+  const wb=XLSX.read(buf,{type:'array',cellDates:true});
+  const rws=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});
+  if(norm(rws[0]&&rws[0][0]).startsWith('gamme')){
+    const g={};let n=0;for(const r of rws.slice(5)){if(r[0]&&r[1]&&typeof r[1]==='string'){g[sv(r[0])]=sv(r[1]);n++}}
+    if(!n)throw new Error('aucune désignation lue');
+    S.gam=g;S.meta.gam={n:Object.keys(g).length,d:dstr(rws[3]&&rws[3][0]),name};return 'gam';
+  }
+  const hi=rws.slice(0,12).findIndex(r=>norm(r[0]).startsWith('article'));
+  if(hi<0)throw new Error('en-têtes introuvables');
+  const H=rws[hi].map(norm).join('|'),D=rws.slice(hi+1);
+  if(H.includes('composant')){
+    const seen=new Set,out=[];
+    for(const r of D){if(!r[2]||!r[4])continue;const o={p:sv(r[0]),c:sv(r[4]),o:sv(r[2]),f:sv(r[5]),cc:sv(r[1]),s:sv(r[6])};const k=Object.values(o).join('|');if(seen.has(k))continue;seen.add(k);o.q=sv(r[7]);o.qr=sv(r[9]);o.b=sv(r[10]);out.push(o)}
+    if(!out.length)throw new Error('aucune ligne OF avec composant');
+    BI=null;S.of=out;S.meta.of={n:out.length,d:dstr(rws[0][0])+(rws[0][2]?' '+sv(rws[0][2]):''),name};return 'of';
+  }
+  if(H.includes('emplac')){
+    const inv=[],id={};
+    const hd=rws[hi].map(norm),li=hd.findIndex(h=>h==='lot'),o=(li>=0&&li<6)?1:0; /* nouvelle colonne Lot : tout ce qui suit est décalé d'un cran */
+    const stk={};for(const r of D){if(!r[0])continue;const a=sv(r[0]),i=sv(r[10+o])==='A'?0:sv(r[10+o])==='R'?1:2;(stk[a]||(stk[a]=[0,0,0]))[i]+=(+r[7+o]||0)}S.stk=stk;
+    for(const r of D){if(!r[0]||!r[9+o])continue;const a=sv(r[0]),e=sv(r[9+o]);if(r[1]&&!id[a])id[a]=sv(r[1]);if(e.startsWith('C1'))inv.push({a,d:sv(r[1]),q:+r[7+o]||0,u:sv(r[8+o]),s:sv(r[10+o]),c:sv(r[6+o]),t:sv(r[3+o]),e,l:o?sv(r[2]):''})}
+    if(!inv.length)throw new Error('aucun emplacement C1 lu');
+    S.inv=inv;S.idesc=id;S.meta.inv={n:inv.length,d:dstr(rws[0][1]),name};
+    const sig=S.meta.inv.d+'|'+inv.length,prev=lsGet('c1-invsig',null);
+    /* import manuel : on repart de zéro. Données partagées : seulement si l'inventaire a changé */
+    if(!opt.shared||(prev!==null&&prev!==sig)){S.mv={};S.asg={};saveMv();saveAsg()}
+    lsSet('c1-invsig',sig);return 'inv';
+  }
+  throw new Error('type de fichier non reconnu');
+}
 async function load(files){
-  const er=$('err');er.hidden=true;const msg=[];
+  const er=$('err');er.hidden=true;const msg=[];let ok=0;
   for(const f of files){
-    try{
-      const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});
-      const rws=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:null});
-      if(norm(rws[0]&&rws[0][0]).startsWith('gamme')){
-        const g={};let n=0;for(const r of rws.slice(5)){if(r[0]&&r[1]&&typeof r[1]==='string'){g[sv(r[0])]=sv(r[1]);n++}}
-        if(!n)throw new Error('aucune désignation lue');
-        S.gam=g;S.meta.gam={n:Object.keys(g).length,d:dstr(rws[3]&&rws[3][0]),name:f.name};continue;
-      }
-      const hi=rws.slice(0,12).findIndex(r=>norm(r[0]).startsWith('article'));
-      if(hi<0)throw new Error('en-têtes introuvables');
-      const H=rws[hi].map(norm).join('|'),D=rws.slice(hi+1);
-      if(H.includes('composant')){
-        const seen=new Set,out=[];
-        for(const r of D){if(!r[2]||!r[4])continue;const o={p:sv(r[0]),c:sv(r[4]),o:sv(r[2]),f:sv(r[5]),cc:sv(r[1]),s:sv(r[6])};const k=Object.values(o).join('|');if(seen.has(k))continue;seen.add(k);o.q=sv(r[7]);o.qr=sv(r[9]);o.b=sv(r[10]);out.push(o)}
-        if(!out.length)throw new Error('aucune ligne OF avec composant');
-        BI=null;S.of=out;S.meta.of={n:out.length,d:dstr(rws[0][0])+(rws[0][2]?' '+sv(rws[0][2]):''),name:f.name};
-      }else if(H.includes('emplac')){
-        const inv=[],id={};
-        const hd=rws[hi].map(norm),li=hd.findIndex(h=>h==='lot'),o=(li>=0&&li<6)?1:0; /* nouvelle colonne Lot : tout ce qui suit est décalé d'un cran */
-        const stk={};for(const r of D){if(!r[0])continue;const a=sv(r[0]),i=sv(r[10+o])==='A'?0:sv(r[10+o])==='R'?1:2;(stk[a]||(stk[a]=[0,0,0]))[i]+=(+r[7+o]||0)}S.stk=stk;
-        for(const r of D){if(!r[0]||!r[9+o])continue;const a=sv(r[0]),e=sv(r[9+o]);if(r[1]&&!id[a])id[a]=sv(r[1]);if(e.startsWith('C1'))inv.push({a,d:sv(r[1]),q:+r[7+o]||0,u:sv(r[8+o]),s:sv(r[10+o]),c:sv(r[6+o]),t:sv(r[3+o]),e,l:o?sv(r[2]):''})}
-        if(!inv.length)throw new Error('aucun emplacement C1 lu');
-        S.inv=inv;S.idesc=id;S.mv={};S.asg={};saveMv();saveAsg();S.meta.inv={n:inv.length,d:dstr(rws[0][1]),name:f.name};
-      }else throw new Error('type de fichier non reconnu');
-    }catch(e){msg.push(f.name+' : '+e.message)}
+    try{const buf=await f.arrayBuffer();const kind=ingest(f.name,buf);S.raw[kind]={buf,name:f.name};ok++}
+    catch(e){msg.push(f.name+' : '+e.message)}
   }
   if(msg.length){er.textContent=msg.join(' · ');er.hidden=false}
   build();
-  if(files.length>msg.length)shAfterLoad();
+  if(ok)shAfterLoad();
 }
 /* ---- events ---- */
 $('files').addEventListener('change',e=>{load([...e.target.files]);e.target.value=''});
@@ -1415,49 +1423,73 @@ document.addEventListener('input',e=>{if(e.target.id==='pfq'){
   renderPf()}});
 document.addEventListener('change',e=>{if(e.target.id==='pfact')renderPf()});
 
-/* ---- enregistrement partagé via GitHub (data.json) ---- */
-const SHKEY='c1-gh',SHDEF=()=>{let repo='';const m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split('/')[1];if(m)repo=m[1]+'/'+(seg||m[1]+'.github.io');return {repo,branch:'',path:'data.json',token:''}};
-const shCfg=()=>({...SHDEF(),...lsGet(SHKEY,{})});
+/* ---- enregistrement partagé : les fichiers Excel chargés remplacent ceux du dépôt GitHub ---- */
+const SHKEY='c1-gh',KINDS={inv:'inventaire.xlsx',of:'of.xlsx',gam:'gamme.xlsx'},KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'},POLL_MS=60000;
+const SHDEF=()=>{let repo='';const m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split('/')[1];if(m)repo=m[1]+'/'+(seg||m[1]+'.github.io');return {repo,branch:'',path:'data',token:''}};
+const shCfg=()=>{const c={...SHDEF(),...lsGet(SHKEY,{})};if(!c.path||/\.json$/i.test(c.path))c.path='data';c.path=c.path.replace(/^\/+|\/+$/g,'');return c};
 const shMsg=(t,bad)=>{const e=$('shmsg');if(e){e.textContent=t;e.style.color=bad?'var(--bad)':''}};
 const shOpen=()=>{const c=shCfg();$('ghrepo').value=c.repo;$('ghbr').value=c.branch;$('ghpath').value=c.path;$('ghtok').value=c.token;$('shform').hidden=false};
-const shSnap=()=>({v:1,saved:new Date().toISOString(),stk:S.stk,of:S.of,inv:S.inv,idesc:S.idesc,gam:S.gam,meta:S.meta});
-function shApply(d){
-  if(!d||d.v!==1||!Array.isArray(d.inv)||!Array.isArray(d.of)||!d.inv.length||!d.of.length)return false;
-  S.stk=d.stk||S.stk;S.of=d.of;S.inv=d.inv;S.idesc=d.idesc||{};S.gam=d.gam||{};S.meta={...S.meta,...(d.meta||{})};S.shared=d.saved;BI=null;
-  const sig=(d.meta?.inv?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
-  if(prev!==null&&prev!==sig){S.mv={};S.asg={};saveMv();saveAsg()}
-  lsSet('c1-invsig',sig);return true;
-}
+const shUrl=(c,k)=>new URL(c.path+'/'+KINDS[k],location.href).href+'?t='+Date.now();
+const SHMOD={};
 async function shFetch(){
   if(!/^https?:$/.test(location.protocol))return false;
-  try{const r=await fetch(new URL(shCfg().path||'data.json',location.href).href+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)return false;return shApply(await r.json())}catch(e){return false}
+  const c=shCfg();let any=false,latest=0;
+  const L=await Promise.all(Object.keys(KINDS).map(async k=>{
+    try{
+      const r=await fetch(shUrl(c,k),{cache:'no-store'});
+      if(!r.ok)return null;
+      const lm=r.headers.get('last-modified')||'',t=Date.parse(lm);if(t>latest)latest=t;SHMOD[k]=lm;
+      return {k,buf:await r.arrayBuffer()};
+    }catch(e){return null}
+  }));
+  /* OF et gamme d'abord, inventaire en dernier (il commande la réinitialisation des rangements) */
+  for(const k of ['gam','of','inv']){const x=L.find(y=>y&&y.k===k);if(!x)continue;try{ingest(KINDS[k],x.buf,{shared:true});any=true}catch(e){}}
+  if(any)S.shared=new Date(latest||Date.now()).toISOString();
+  return any;
 }
-const shB64=str=>{const u=new TextEncoder().encode(str);let b='';for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)};
-async function shPublish(){
+async function shPoll(){
+  if(!/^https?:$/.test(location.protocol))return;
   const c=shCfg();
-  if(!c.repo||!c.token){shOpen();shMsg('Renseignez le dépôt et le jeton GitHub, puis enregistrez les paramètres.',true);return}
-  const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
   try{
-    const snap=shSnap(),content=shB64(JSON.stringify(snap));
-    const api='https://api.github.com/repos/'+c.repo+'/contents/'+c.path.split('/').map(encodeURIComponent).join('/');
-    const H={Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json','Content-Type':'application/json'};
-    let ok=false,last=0;
-    for(let i=0;i<2&&!ok;i++){
-      const g=await fetch(api+(c.branch?'?ref='+encodeURIComponent(c.branch):''),{headers:H,cache:'no-store'});
-      if(g.status===401||g.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
-      const sha=g.ok?(await g.json()).sha:undefined;
-      const body={message:'Mise à jour des données '+new Date().toLocaleString('fr-FR'),content,...(c.branch?{branch:c.branch}:{}),...(sha?{sha}:{})};
-      const r=await fetch(api,{method:'PUT',headers:H,body:JSON.stringify(body)});
-      last=r.status;
-      if(r.ok){ok=true;break}
-      if(r.status===401||r.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
-      if(r.status===404)throw new Error('Dépôt, branche ou chemin introuvable : vérifiez les paramètres.');
-      if(r.status!==409&&r.status!==422)throw new Error('GitHub a répondu '+r.status+'.');
+    for(const k of Object.keys(KINDS)){
+      const r=await fetch(shUrl(c,k),{method:'HEAD',cache:'no-store'});
+      if(!r.ok)continue;
+      const lm=r.headers.get('last-modified')||'';
+      if(lm&&SHMOD[k]&&lm!==SHMOD[k]){if(await shFetch()){build();renderPf();src()}return}
+      if(lm&&!SHMOD[k])SHMOD[k]=lm;
     }
-    if(!ok)throw new Error('Conflit d\'écriture (code '+last+'), réessayez.');
-    S.shared=snap.saved;src();
-    shMsg('Données publiées pour tous. Les autres utilisateurs les verront dans 1 à 2 minutes, le temps que GitHub Pages se mette à jour.');
-  }catch(e){shMsg('Échec de la publication : '+e.message,true)}
+  }catch(e){}
+}
+const shB64=buf=>{const u=new Uint8Array(buf);let b='';for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(b)};
+async function shPublish(){
+  const c=shCfg(),kinds=Object.keys(S.raw);
+  if(!c.repo||!c.token){shOpen();shMsg('Renseignez le dépôt et le jeton GitHub, puis enregistrez les paramètres.',true);return}
+  if(!kinds.length){shMsg('Aucun nouveau fichier à publier : déposez d\'abord les fichiers Excel.',true);return}
+  const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
+  const H={Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json','Content-Type':'application/json'};
+  const done=[];
+  try{
+    for(const k of kinds){
+      const api='https://api.github.com/repos/'+c.repo+'/contents/'+(c.path?c.path+'/':'')+KINDS[k];
+      const content=shB64(S.raw[k].buf);let ok=false,last=0;
+      for(let i=0;i<2&&!ok;i++){
+        const g=await fetch(api+(c.branch?'?ref='+encodeURIComponent(c.branch):''),{headers:H,cache:'no-store'});
+        if(g.status===401||g.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
+        const sha=g.ok?(await g.json()).sha:undefined;
+        const body={message:'Mise à jour '+KLAB[k]+' ('+S.raw[k].name+') '+new Date().toLocaleString('fr-FR'),content,...(c.branch?{branch:c.branch}:{}),...(sha?{sha}:{})};
+        const r=await fetch(api,{method:'PUT',headers:H,body:JSON.stringify(body)});
+        last=r.status;
+        if(r.ok){ok=true;break}
+        if(r.status===401||r.status===403)throw new Error('Jeton refusé ou sans droit d\'écriture (Contents : lecture et écriture).');
+        if(r.status===404)throw new Error('Dépôt, branche ou dossier introuvable : vérifiez les paramètres.');
+        if(r.status!==409&&r.status!==422)throw new Error('GitHub a répondu '+r.status+'.');
+      }
+      if(!ok)throw new Error('Conflit d\'écriture sur '+KLAB[k]+' (code '+last+'), réessayez.');
+      done.push(KLAB[k]);delete S.raw[k];
+    }
+    S.shared=new Date().toISOString();src();
+    shMsg('Enregistré pour tous : '+done.join(', ')+'. Les autres utilisateurs le reçoivent automatiquement dans 1 à 2 minutes, le temps que GitHub Pages se mette à jour.');
+  }catch(e){shMsg((done.length?'Déjà publié : '+done.join(', ')+'. ':'')+'Échec de la publication : '+e.message,true)}
   finally{btn.disabled=false}
 }
 function shAfterLoad(){
@@ -1470,17 +1502,20 @@ $('shcfg').addEventListener('click',()=>{const f=$('shform');if(f.hidden)shOpen(
 $('ghsave').addEventListener('click',()=>{
   const v=x=>$(x).value.trim(),repo=v('ghrepo').replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/+$/,'');
   if(!/^[^\/\s]+\/[^\/\s]+$/.test(repo)){shMsg('Dépôt invalide : saisissez compte/nom.',true);return}
-  lsSet(SHKEY,{repo,branch:v('ghbr'),path:v('ghpath')||'data.json',token:v('ghtok')});
-  $('shform').hidden=true;shMsg('Paramètres enregistrés. Cliquez sur « Publier pour tous » pour enregistrer les données actuelles.');
+  lsSet(SHKEY,{repo,branch:v('ghbr'),path:v('ghpath')||'data',token:v('ghtok')});
+  $('shform').hidden=true;shMsg('Paramètres enregistrés. Déposez les fichiers Excel : ils seront publiés automatiquement.');
 });
+/* mise à jour dynamique : on vérifie chaque minute (page visible) et au retour sur la page */
+setInterval(()=>{if(document.visibilityState!=='hidden')shPoll()},POLL_MS);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')shPoll()});
 /* démarrage : un QR scanné attend les données partagées avant d'afficher la fiche */
 if(/pf=/.test(location.hash+location.search)){
   document.body.classList.add('scan');$('v-pf').hidden=false;
   $('pfbody').innerHTML='<div class="panel"><p class="note" style="margin:0">Chargement du stock…</p></div>';
-  Promise.race([shFetch(),new Promise(r=>setTimeout(r,4000))]).then(()=>{build();pfFromUrl()});
+  Promise.race([shFetch(),new Promise(r=>setTimeout(r,8000))]).then(()=>{build();pfFromUrl()});
 }else{
   build();pfFromUrl();
-  shFetch().then(ok=>{if(ok){build();renderPf()}});
+  shFetch().then(ok=>{if(ok){build();renderPf();src()}});
 }
 window.addEventListener('hashchange',pfFromUrl);
 </script>
