@@ -1053,6 +1053,8 @@ function renderAll(){kpis();renderMove();renderRes();renderAsg();renderPlan();re
 const sv=v=>v==null?'':String(v).trim();
 const dstr=v=>v instanceof Date?v.toLocaleDateString('fr-FR'):sv(v);
 const tstr=v=>v instanceof Date?String(v.getHours()).padStart(2,'0')+':'+String(v.getMinutes()).padStart(2,'0'):sv(v);
+const hasT=x=>/\d{1,2}:\d{2}/.test(String(x||''));
+const hhmm=ts=>{const d=new Date(ts);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
 const fixD=d=>String(d||'').replace(/\s+[A-Z][a-z]{2} [A-Z][a-z]{2} \d+ 1899 (\d\d:\d\d):\d\d.*$/,' $1');
 let XLP=null;
 /* la bibliothèque Excel se charge depuis le dossier de l'application d'abord, puis depuis 3 CDN (utile si le réseau de l'usine en bloque un) */
@@ -1084,7 +1086,10 @@ function ingest(name,buf,opt={}){
     const stk={};for(const r of D){if(!r[0])continue;const a=sv(r[0]),i=sv(r[10+o])==='A'?0:sv(r[10+o])==='R'?1:2;(stk[a]||(stk[a]=[0,0,0]))[i]+=(+r[7+o]||0)}S.stk=stk;
     for(const r of D){if(!r[0]||!r[9+o])continue;const a=sv(r[0]),e=sv(r[9+o]);if(r[1]&&!id[a])id[a]=sv(r[1]);if(e.startsWith('C1'))inv.push({a,d:sv(r[1]),q:+r[7+o]||0,u:sv(r[8+o]),s:sv(r[10+o]),c:sv(r[6+o]),t:sv(r[3+o]),e,l:o?sv(r[2]):''})}
     if(!inv.length)throw new Error('aucun emplacement C1 lu');
-    S.inv=inv;S.idesc=id;S.meta.inv={n:inv.length,d:dstr(rws[0][1]),name};
+    const c0=rws[0][1];let tm='';
+    if(c0 instanceof Date&&(c0.getHours()||c0.getMinutes()))tm=tstr(c0);                                  /* heure dans la cellule */
+    if(!tm){const mt=String(name).match(/T(\d{2})(\d{2})(\d{2})/);if(mt)tm=mt[1]+':'+mt[2]}              /* sinon heure du nom de fichier (…T105400…) */
+    S.inv=inv;S.idesc=id;S.meta.inv={n:inv.length,d:dstr(c0)+(tm?' '+tm:''),name};
     const sig=S.meta.inv.d+'|'+inv.length,prev=lsGet('c1-invsig',null);
     /* import manuel : on repart de zéro. Données partagées : seulement si l'inventaire a changé */
     if(!opt.shared||(prev!==null&&prev!==sig)){S.mv={};S.asg={};S.nc={};saveMv();saveAsg();saveNc()}
@@ -1371,10 +1376,11 @@ function pfFilter(){
   return L.sort();
 }
 function ofBadge(f){const k=norm(f),c=OFORD[k];return `<span class="bdg${c!==undefined&&c<3?' c'+c:''}">${esc(f||'')}</span>`}
+const atT=d=>String(d||'').replace(/(\d{4}) (\d{1,2}:\d{2})/,'$1 à $2');
 function pfHero(R,p){
   const dI=R.sd||S.meta.inv?.d||'date inconnue',dO=R.od||S.meta.of?.d||'date inconnue';
   return `<div class="panel pfhero"><div class="pfh-top"><div><div class="pfh-k">Produit fini</div><div class="pfh-code">${esc(p)}</div><div class="pfh-desc">${esc(R.dd??desc(p))}</div></div>${SCAN?'':`<div>${qrSvg(pfUrl(p),96)}</div>`}</div>
-  <div class="pfh-dates"><span class="pill">Stock au <b>${esc(dI)}</b></span><span class="pill">Liste des OF au <b>${esc(dO)}</b></span></div>
+  <div class="pfh-dates"><span class="pill">Stock au <b>${esc(atT(dI))}</b></span><span class="pill">Liste des OF au <b>${esc(atT(dO))}</b></span></div>
   ${SCAN?'':'<div class="row"><button class="btn ghost" type="button" data-pfprint="1">Imprimer la fiche</button></div>'}</div>`;
 }
 function pfProd(R){
@@ -1441,7 +1447,7 @@ document.addEventListener('change',e=>{
 /* ---- enregistrement partagé en temps réel : Firebase Realtime Database ---- */
 /* >>> À RENSEIGNER UNE FOIS (voir les étapes de configuration) : */
 const FB_URL='https://magasin-c1-default-rtdb.europe-west1.firebasedatabase.app/';      /* ex. https://mon-projet-default-rtdb.europe-west1.firebasedatabase.app */
-const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';     /* clé API Web du projet Firebase (AIza…) */
+const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';      /* clé API Web du projet Firebase (AIza…) */
 /* <<< */
 const FBROOT='c1',KINDS=['inv','of','gam'],KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'};
 const fbOn=()=>!!(FB_URL&&FB_KEY),fbDb=p=>FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'/'+p+'.json';
@@ -1451,9 +1457,10 @@ function shUi(){
   if(!fbOn()){const ad=$('shadmin');if(ad)ad.hidden=true;shMsg('Firebase non configuré : renseignez FB_URL et FB_KEY dans index.html.',true)}
 }
 /* ---- lecture : applique ce qui a changé dans la base ---- */
-function shApplyKind(k,d){
+function shApplyKind(k,d,t){
   if(k==='inv'){
-    S.inv=d.inv;S.idesc=d.idesc||{};S.stk=d.stk||S.stk;S.meta.inv=d.meta;
+    S.inv=d.inv;S.idesc=d.idesc||{};S.stk=d.stk||S.stk;S.meta.inv={...d.meta};
+    if(S.meta.inv.d&&!hasT(S.meta.inv.d)&&t)S.meta.inv.d+=' '+hhmm(t);
     const sig=(d.meta?.d||'')+'|'+d.inv.length,prev=lsGet('c1-invsig',null);
     if(prev!==null&&prev!==sig){S.mv={};S.asg={};S.nc={};saveMv();saveAsg();saveNc()}
     lsSet('c1-invsig',sig);
@@ -1490,7 +1497,7 @@ function shFetch(){
         try{
           let node=pre?await pre[k]:null;
           if(!node||node.t!==t)node=await shGet(k);
-          if(node&&node.d){shApplyKind(k,JSON.parse(node.z?await gunzB64(node.d):node.d));SHT[k]=node.t;any=true}
+          if(node&&node.d){shApplyKind(k,JSON.parse(node.z?await gunzB64(node.d):node.d),node.t);SHT[k]=node.t;any=true}
         }catch(e){}
       }
       if(latest)S.shared=new Date(latest).toISOString();
@@ -1555,6 +1562,7 @@ async function shPublish(){
   const btn=$('shpub');btn.disabled=true;shMsg('Publication en cours…');
   try{
     const t=Date.now(),upd={};
+    if(kinds.includes('inv')&&S.meta.inv.d&&!hasT(S.meta.inv.d))S.meta.inv.d+=' '+hhmm(t);
     for(const k of kinds){const raw=JSON.stringify(shPayload(k)),z=await gzB64(raw);upd[k]=z?{t,d:z,z:1}:{t,d:raw};upd['meta/'+k]={t}}
     const fi=shFiches(t);if(fi){upd.pf=fi;upd['meta/pf']={t}}
     const r=await fetch(FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'.json',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(upd)});
