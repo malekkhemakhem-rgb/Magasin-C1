@@ -1447,7 +1447,7 @@ document.addEventListener('change',e=>{
 /* ---- enregistrement partagé en temps réel : Firebase Realtime Database ---- */
 /* >>> À RENSEIGNER UNE FOIS (voir les étapes de configuration) : */
 const FB_URL='https://magasin-c1-default-rtdb.europe-west1.firebasedatabase.app/';      /* ex. https://mon-projet-default-rtdb.europe-west1.firebasedatabase.app */
-const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';      /* clé API Web du projet Firebase (AIza…) */
+const FB_KEY='AIzaSyA7dH7m8EnXjla_1HINWd05NwZJAz21xVA';     /* clé API Web du projet Firebase (AIza…) */
 /* <<< */
 const FBROOT='c1',KINDS=['inv','of','gam'],KLAB={inv:'inventaire',of:'liste des OF',gam:'gamme'};
 const fbOn=()=>!!(FB_URL&&FB_KEY),fbDb=p=>FB_URL.replace(/\/+$/,'')+'/'+FBROOT+'/'+p+'.json';
